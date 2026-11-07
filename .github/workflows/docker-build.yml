@@ -38,12 +38,21 @@ jobs:
         run: |
           echo "Waiting for FastAPI & YOLO model initialization..."
           for i in {1..30}; do
+            STATUS=$(docker inspect -f '{{.State.Status}}' ai-cam-test 2>/dev/null || echo "not_found")
+            if [ "$STATUS" != "running" ]; then
+              echo "Container exited prematurely with status: $STATUS"
+              docker logs ai-cam-test
+              exit 1
+            fi
             if curl -s -f http://localhost:7860/api/v1/health/live > /dev/null; then
-              echo "Server liveness probe passed."
-              break
+              echo "Server liveness probe passed after ${i} checks."
+              exit 0
             fi
             sleep 2
           done
+          echo "Timeout waiting for service readiness. Container logs:"
+          docker logs ai-cam-test
+          exit 1
 
       - name: Test Liveness Probe (/api/v1/health/live)
         run: |
@@ -63,6 +72,7 @@ jobs:
           echo "$HTML_OUTPUT" | grep -q "AI Smart Camera" && echo "Frontend served successfully."
 
       - name: Verify Container Application Logs
+        if: always()
         run: |
           echo "=== CONTAINER LOGS ==="
           docker logs ai-cam-test
