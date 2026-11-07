@@ -8,7 +8,7 @@ import torch
 
 from app.config import settings
 from app.services.camera_service import CameraService
-from app.ui.gradio_app import create_gradio_app
+from app.ui.gradio_app import APP_CSS, APP_THEME, create_gradio_app
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -54,6 +54,8 @@ def run_app() -> None:
         server_name=args.host,
         server_port=args.port,
         share=args.share,
+        theme=APP_THEME,
+        css=APP_CSS,
         show_error=True,
     )
 

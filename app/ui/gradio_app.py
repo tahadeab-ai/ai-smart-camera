@@ -12,21 +12,21 @@ from app.vision.counter import ObjectCounter
 logger = logging.getLogger(__name__)
 
 
+APP_THEME = gr.themes.Soft(primary_hue="blue", secondary_hue="slate")
+APP_CSS = """
+.gradio-container { max-width: 1200px !important; margin: auto; }
+.tab-panel { padding: 12px 0; }
+footer { visibility: hidden !important; }
+"""
+
+
 def create_gradio_app(camera_service: CameraService) -> gr.Blocks:
     """Builds and wires the full Gradio Blocks web application."""
 
     # Extract available class names for filter dropdown
     available_classes = sorted(camera_service.detector.class_names.values())
 
-    with gr.Blocks(
-        title="AI Smart Camera | Computer Vision MVP",
-        theme=gr.themes.Soft(primary_hue="blue", secondary_hue="slate"),
-        css="""
-        .gradio-container { max-width: 1200px !important; margin: auto; }
-        .tab-panel { padding: 12px 0; }
-        footer { visibility: hidden !important; }
-        """,
-    ) as demo:
+    with gr.Blocks(title="AI Smart Camera | Computer Vision MVP") as demo:
         header_component()
         privacy_banner()
 
