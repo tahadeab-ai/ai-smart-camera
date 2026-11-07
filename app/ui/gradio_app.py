@@ -16,7 +16,7 @@ def create_gradio_app(camera_service: CameraService) -> gr.Blocks:
     """Builds and wires the full Gradio Blocks web application."""
 
     # Extract available class names for filter dropdown
-    available_classes = sorted(list(camera_service.detector.class_names.values()))
+    available_classes = sorted(camera_service.detector.class_names.values())
 
     with gr.Blocks(
         title="AI Smart Camera | Computer Vision MVP",

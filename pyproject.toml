@@ -50,6 +50,13 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = [
+    "notebooks",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+]
 
 [tool.ruff.lint]
 select = [
