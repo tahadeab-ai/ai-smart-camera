@@ -4,27 +4,28 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ai-smart-camera
-    image: ai-smart-camera:latest
+    image: ai-smart-camera:0.2.0
     restart: unless-stopped
     ports:
       - "7860:7860"
     environment:
       - APP_HOST=0.0.0.0
       - APP_PORT=7860
-      - GRADIO_SHARE=false
       - MODEL_NAME=yolov8n
       - DEVICE=cpu
       - CONFIDENCE_THRESHOLD=0.25
       - IOU_THRESHOLD=0.45
       - LOG_LEVEL=INFO
+      - MAX_CONCURRENT_STREAMS=5
+      - MAX_UPLOAD_SIZE_MB=20
     volumes:
       - model_cache:/app/models/weights
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7860/"]
+      test: ["CMD", "curl", "-f", "http://localhost:7860/api/v1/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 30s
 
 volumes:
   model_cache:

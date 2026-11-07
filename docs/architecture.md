@@ -1,101 +1,145 @@
-# Architecture Specification: AI Smart Camera
+# Architecture Specification: AI Smart Camera v0.2.0
 
-This document details the modular software architecture, data flow, component boundaries, and security considerations of the **AI Smart Camera** system.
+This document details the software architecture, component boundaries, WebSocket streaming protocol, and security considerations of the **AI Smart Camera v0.2.0** full-stack system.
 
 ---
 
-## 1. System Overview & Data Flow
+## 1. System Architecture Overview
 
-The application decouples user interface delivery, camera frame lifecycle management, computer vision processing, and deep learning execution into clear vertical layers.
+The system employs a production-grade three-layer architecture:
+1. **Client Tier**: React 18 + TypeScript SPA using Vite, Tailwind CSS, and HTML5 MediaDevices.
+2. **API & Service Tier**: FastAPI backend running under Uvicorn, serving the REST API (`/api/v1/`), real-time WebSocket stream (`/api/v1/stream`), and compiled static frontend assets from a single origin.
+3. **Computer Vision Core Tier**: PyTorch YOLO models wrapped by Ultralytics and annotated using Roboflow Supervision.
 
 ```mermaid
 flowchart TD
-    subgraph Client["Client Tier (Mobile / Desktop)"]
-        Browser["Web Browser (Chrome / Safari / Edge)"]
-        Camera["Hardware Camera Feed / Image Upload"]
+    subgraph Client["Client Tier (Mobile / Desktop Browser)"]
+        ReactApp["React 18 + TypeScript Web Application"]
+        CameraHook["useCamera (MediaDevices API)"]
+        WSHook["useWebSocket (Binary JPEG & Telemetry)"]
+        UIViews["Views: Live Camera | Image Analysis | System Telemetry"]
     end
 
-    subgraph Presentation["Presentation Tier (Gradio v6)"]
-        GradioUI["Gradio Web Server (Port 7860)"]
-        StreamHandler["WebSocket / HTTP Frame Stream Handler"]
-        Controls["Config Controls (Thresholds, Filters)"]
+    subgraph Backend["API & Presentation Tier (FastAPI / Uvicorn :7860)"]
+        FastAPI["FastAPI Application"]
+        SPAMount["StaticFiles Mount & SPA Routing Fallback"]
+        REST["REST API (/api/v1/health, /system, /models, /detect)"]
+        WSRoute["WebSocket Router (/api/v1/stream)"]
+        AuthMiddleware["Access Token Authenticator & Rate Limiter"]
     end
 
-    subgraph Service["Application Service Tier"]
-        CameraSvc["CameraService Orchestrator"]
-        Throttler["Frame Rate Throttler / Decimator"]
+    subgraph Service["Application Services Tier"]
+        StreamMgr["StreamManager (Per-Session State & Decimation Cache)"]
+        CameraSvc["CameraService (Thread-Safe Coordinator)"]
+        Lock["Concurrency Lock (threading.Lock)"]
     end
 
-    subgraph Vision["Computer Vision Tier"]
-        InfEngine["InferenceEngine"]
+    subgraph CV["Computer Vision Core Tier"]
+        InfEngine["InferenceEngine (Latency Instrumentation)"]
         YOLO["Ultralytics YOLO (PyTorch)"]
-        Detector["ObjectDetector"]
-        Supervision["Roboflow Supervision"]
+        Detector["ObjectDetector (Supervision Bridge)"]
         Annotator["VisionAnnotator (Box & Label Annotators)"]
-        Counter["ObjectCounter"]
+        Counter["ObjectCounter (Tally & Class Breakdown)"]
     end
 
     subgraph Storage["Model & Artifact Management Tier"]
-        ModelLoader["ModelLoader"]
+        ModelLoader["ModelLoader (SHA-256 Checksum Verification)"]
         Manifest["models/manifest.yaml"]
-        WeightCache["Local Weight Cache (models/weights)"]
-        OfficialCDN["Official Ultralytics CDN (Runtime Fetch)"]
+        WeightCache["Persistent Weight Cache (models/weights)"]
     end
 
-    Camera --> Browser
-    Browser <--> GradioUI
-    GradioUI --> StreamHandler
-    StreamHandler --> CameraSvc
-    Controls --> CameraSvc
+    ReactApp --> CameraHook
+    ReactApp --> WSHook
+    CameraHook --> WSHook
 
-    CameraSvc --> Throttler
-    Throttler --> InfEngine
+    WSHook <== "WebSocket (Binary Frames + JSON)" ==> WSRoute
+    ReactApp <== "REST (JSON / Multipart)" ==> REST
+    ReactApp <== "HTTP (HTML / JS / CSS)" ==> SPAMount
+
+    WSRoute --> StreamMgr
+    REST --> CameraSvc
+    StreamMgr --> CameraSvc
+    CameraSvc --> Lock
+
+    CameraSvc --> InfEngine
     InfEngine --> YOLO
     YOLO --> Detector
-    Detector --> Supervision
-    Supervision --> Annotator
-    Supervision --> Counter
+    Detector --> Annotator
+    Detector --> Counter
 
-    Annotator --> CameraSvc
-    Counter --> CameraSvc
-    CameraSvc --> StreamHandler
-    StreamHandler --> Browser
-
-    ModelLoader -. Reads .-> Manifest
-    ModelLoader -. Checks / Saves .-> WeightCache
-    ModelLoader -. Downloads with SHA-256 .-> OfficialCDN
-    ModelLoader -. Initializes .-> YOLO
+    CameraSvc --> ModelLoader
+    ModelLoader --> Manifest
+    ModelLoader --> WeightCache
 ```
 
 ---
 
-## 2. Core Architectural Principles
+## 2. WebSocket Streaming Protocol (`/api/v1/stream`)
 
-### A. Strict Decoupling
-- **Inference Independence**: `InferenceEngine` has zero dependencies on Gradio, OpenCV drawing functions, or UI elements. It takes standard image arrays and returns tensor predictions.
-- **Vision Abstraction**: `ObjectDetector` maps raw tensor outputs to `supervision.Detections`. If model backends change (e.g., from PyTorch to ONNX Runtime or TensorRT), downstream annotation and counting remain unaffected.
-- **Service Orchestration**: `CameraService` manages end-to-end processing without being tightly bound to Gradio. It can be wrapped in a FastAPI REST/WebSocket endpoint without code duplication.
+The real-time camera streaming protocol guarantees deterministic frame-to-metadata association and avoids unbounded memory buildup through backpressure management.
 
-### B. Frame Throttling & Latency Management
-- Mobile and cellular video streaming encounters network jitter. The application provides `stream_every` parameterization and `skip_interval` frame decimation to prevent frame queue backpressure.
-- If processing a frame encounters unexpected errors, `CameraService` catches the exception and returns the original frame, maintaining stream continuity without crashing the user session.
+### Sequence Flow
 
-### C. Zero-Disk In-Memory Processing
-- Camera streams and uploaded images are processed entirely within RAM buffers.
-- No client images, video frames, or personally identifiable information are persisted to disk.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User (Mobile / Desktop)
+    participant Client as React Client (useWebSocket)
+    participant WS as FastAPI WebSocket (/api/v1/stream)
+    participant SM as StreamManager & Session
+    participant CV as CameraService (YOLO Core)
+
+    User->>Client: Start Live Stream
+    Client->>WS: Connect (ws://host/api/v1/stream?token=...)
+    WS->>WS: Validate Token & Concurrency Budget
+    WS-->>Client: Connection Accepted (101 Switching Protocols)
+
+    Client->>WS: Config JSON ({"type": "config", "confidence_threshold": 0.25, "skip_interval": 2})
+    WS->>SM: Update Session Configuration
+    WS-->>Client: Config ACK ({"type": "config_ack", "status": "ok"})
+
+    loop Continuous Video Stream
+        Client->>Client: Capture Frame from Video to JPEG
+        Client->>WS: Binary Message: [4-Byte frame_id] + [Raw JPEG Bytes]
+        WS->>SM: process_frame_bytes(session, bytes, frame_id)
+
+        alt Frame Not Skipped (Active Inference)
+            SM->>CV: predict() & annotate()
+            CV-->>SM: detections, annotated_frame, latency_ms
+            SM->>SM: Cache latest detections & stats
+        else Frame Decimated (Skipped Interval)
+            SM->>SM: Re-annotate new frame with cached detections (<1ms)
+            Note over SM: Eliminates bounding box flicker
+        end
+
+        WS-->>Client: Text JSON Metadata ({"type": "detection", "frame_id": ..., "fps": ..., "stats": ...})
+        WS-->>Client: Binary Message: [4-Byte frame_id] + [Annotated JPEG Bytes]
+        Client->>User: Render Live Video with Persistent Overlays
+    end
+
+    User->>Client: Stop Stream
+    Client->>WS: Close Connection (1000 Normal Closure)
+    WS->>SM: remove_session()
+```
+
+### Frame Decimation & Caching Specification
+When `skip_interval > 1`:
+- **Problem in v0.1.0**: On skipped frames, returning unannotated frames and 0 counts caused severe flickering.
+- **Solution in v0.2.0**:
+  - The `StreamSession` retains `last_detections` and `last_stats`.
+  - On skipped frames, the new incoming frame is re-annotated with `last_detections` in <1 millisecond (pure OpenCV drawing).
+  - The client receives the smoothly moving video feed, persistent bounding boxes, and accurate object statistics with zero model latency.
 
 ---
 
-## 3. Directory & Component Mapping
+## 3. Public Colab Security Architecture
 
-| Module | Responsibility | Key Classes / Functions |
-| :--- | :--- | :--- |
-| `app.config` | Reads environment variables and manages defaults. | `AppSettings` |
-| `app.core.model_loader` | Resolves, downloads, verifies SHA-256, and loads models. | `ModelLoader`, `ModelLoadingError` |
-| `app.core.inference` | Runs YOLO inference and tracks execution latency. | `InferenceEngine` |
-| `app.vision.detector` | Translates YOLO output to `sv.Detections` with filtering. | `ObjectDetector` |
-| `app.vision.annotator` | Renders high-contrast bounding boxes and label cards. | `VisionAnnotator` |
-| `app.vision.counter` | Computes counts and generates summary markdown tables. | `ObjectCounter` |
-| `app.services.camera_service` | Orchestrates end-to-end camera and static image pipelines. | `CameraService` |
-| `app.ui.gradio_app` | Assembles Gradio tabs, controls, and event listeners. | `create_gradio_app` |
-| `app.main` | CLI entry point for Colab, Docker, or standalone runs. | `run_app` |
+When deployed inside Google Colab via Cloudflare Quick Tunnel (`*.trycloudflare.com`):
+1. **Access Token Authentication**:
+   - A cryptographically random token (`secrets.token_hex(16)`) is generated at runtime and exported as `APP_ACCESS_TOKEN`.
+   - Incoming REST requests must supply `X-Access-Token: <token>`.
+   - WebSocket handshakes must supply `?token=<token>`.
+   - If `APP_ACCESS_TOKEN` is unset, access defaults to open development mode.
+2. **Rate Limiting & Concurrency**:
+   - `MAX_CONCURRENT_STREAMS` (default: 5) rejects excessive WebSocket handshakes with status code `1013` (Try Again Later).
+   - `MAX_UPLOAD_SIZE_MB` (default: 20MB) prevents memory exhaustion on image uploads with HTTP `413`.

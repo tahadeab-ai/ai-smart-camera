@@ -19,6 +19,13 @@ class AppSettings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 7860
     gradio_share: bool = False
+    cors_origins: list[str] = ["*"]
+    static_dir: Path = Path("./frontend/dist")
+
+    # Security & Rate Limiting
+    access_token: str | None = None
+    max_concurrent_streams: int = 5
+    max_upload_size_mb: int = 20
 
     # Model Configuration
     model_name: str = "yolov8n"

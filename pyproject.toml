@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-smart-camera"
-version = "0.1.0"
-description = "Real-time edge-ready AI Camera with YOLO and Supervision | Colab-First & Docker-Ready"
+version = "0.2.0"
+description = "Real-time edge-ready AI Camera with YOLO, Supervision, FastAPI, and React | Colab-First & Docker-Ready"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -31,6 +31,10 @@ dependencies = [
     "opencv-python-headless>=4.8.0",
     "numpy>=1.24.0",
     "pillow>=10.0.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.28.0",
+    "python-multipart>=0.0.9",
+    "websockets>=12.0",
     "gradio>=5.0.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.0.0",
@@ -43,6 +47,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-mock>=3.12.0",
     "pytest-cov>=4.1.0",
+    "httpx>=0.27.0",
     "ruff>=0.4.0",
     "mypy>=1.9.0",
 ]

@@ -1,4 +1,4 @@
-name: Docker - Build Verification
+name: Docker - Build & Runtime Verification
 
 on:
   push:
@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  build-docker:
+  docker-runtime-test:
+    name: Multi-Stage Build & Container Runtime Smoke Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -17,12 +18,57 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image (Verification Only)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: false
-          tags: ai-smart-camera:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build Multi-Stage Docker Image
+        run: |
+          docker build -t ai-smart-camera:0.2.0 .
+
+      - name: Start Container in Background
+        run: |
+          docker run -d \
+            --name ai-cam-test \
+            -p 7860:7860 \
+            -e APP_HOST=0.0.0.0 \
+            -e APP_PORT=7860 \
+            -e MODEL_NAME=yolov8n \
+            -e DEVICE=cpu \
+            -e LOG_LEVEL=DEBUG \
+            ai-smart-camera:0.2.0
+
+      - name: Await Service Readiness
+        run: |
+          echo "Waiting for FastAPI & YOLO model initialization..."
+          for i in {1..30}; do
+            if curl -s -f http://localhost:7860/api/v1/health/live > /dev/null; then
+              echo "Server liveness probe passed."
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Test Liveness Probe (/api/v1/health/live)
+        run: |
+          curl -s -f -v http://localhost:7860/api/v1/health/live
+
+      - name: Test Readiness Probe (/api/v1/health/ready)
+        run: |
+          curl -s -f -v http://localhost:7860/api/v1/health/ready
+
+      - name: Test OpenAPI Swagger Documentation (/docs)
+        run: |
+          curl -s -f -v http://localhost:7860/docs
+
+      - name: Test React SPA Frontend Root (/)
+        run: |
+          HTML_OUTPUT=$(curl -s -f http://localhost:7860/)
+          echo "$HTML_OUTPUT" | grep -q "AI Smart Camera" && echo "Frontend served successfully."
+
+      - name: Verify Container Application Logs
+        run: |
+          echo "=== CONTAINER LOGS ==="
+          docker logs ai-cam-test
+
+      - name: Stop and Clean Up Container
+        if: always()
+        run: |
+          docker stop ai-cam-test || true
+          docker rm ai-cam-test || true

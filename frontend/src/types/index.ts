@@ -1,0 +1,74 @@
+export interface BoundingBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  confidence: number;
+  class_id: number;
+  class_name: string;
+}
+
+export interface DetectionStats {
+  total_count: number;
+  class_counts: Record<string, number>;
+}
+
+export interface StreamMetadata {
+  type: string;
+  frame_id: number;
+  timestamp: number;
+  latency_ms: number;
+  fps: number;
+  stats: DetectionStats;
+  detections: BoundingBox[];
+  skipped?: boolean;
+}
+
+export interface StreamConfig {
+  confidence_threshold: number;
+  iou_threshold: number;
+  filter_classes: string[];
+  skip_interval: number;
+  return_annotated_frame: boolean;
+  jpeg_quality: number;
+}
+
+export interface ImageDetectionResponse {
+  annotated_image: string;
+  detections: BoundingBox[];
+  stats: DetectionStats;
+  latency_ms: number;
+  model_name: string;
+  device: string;
+  image_width: number;
+  image_height: number;
+}
+
+export interface SystemInfo {
+  platform: string;
+  python_version: string;
+  torch_version: string;
+  cuda_available: boolean;
+  device: string;
+  active_model: string;
+  cpu_count: number;
+  memory_total_gb?: number;
+  memory_available_gb?: number;
+  active_stream_count: number;
+}
+
+export interface ModelInfo {
+  name: string;
+  framework: string;
+  task: string;
+  license: string;
+  description: string;
+  size_mb: number;
+  checksum_sha256: string;
+  is_active: boolean;
+}
+
+export interface ModelListResponse {
+  models: ModelInfo[];
+  active_model: string;
+}
