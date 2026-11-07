@@ -2,9 +2,9 @@
 
 import hashlib
 import logging
-import os
 from pathlib import Path
 from typing import Any
+
 import requests
 import yaml
 from ultralytics import YOLO
@@ -41,7 +41,7 @@ class ModelLoader:
             logger.warning("Manifest not found at %s. Proceeding with empty manifest.", self.manifest_path)
             return {"models": {}}
         try:
-            with open(self.manifest_path, "r", encoding="utf-8") as f:
+            with open(self.manifest_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
                 return data or {"models": {}}
         except Exception as e:

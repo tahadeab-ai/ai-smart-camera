@@ -1,8 +1,8 @@
 """Unit tests for ObjectDetector component."""
 
 from unittest.mock import MagicMock
+
 import numpy as np
-import pytest
 import supervision as sv
 
 from app.vision.detector import ObjectDetector

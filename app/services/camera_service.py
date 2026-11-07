@@ -1,8 +1,8 @@
 """Camera service orchestrating computer vision pipeline for stream and static images."""
 
 import logging
-import time
 from typing import Any
+
 import numpy as np
 from PIL import Image
 

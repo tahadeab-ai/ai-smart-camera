@@ -1,7 +1,6 @@
 """Unit tests for ObjectCounter component."""
 
 import numpy as np
-import pytest
 import supervision as sv
 
 from app.vision.counter import ObjectCounter

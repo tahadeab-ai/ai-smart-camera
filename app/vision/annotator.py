@@ -1,6 +1,7 @@
 """Vision annotator using Supervision to draw boxes, labels, and confidences."""
 
 import logging
+
 import numpy as np
 import supervision as sv
 

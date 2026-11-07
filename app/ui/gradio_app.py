@@ -1,7 +1,7 @@
 """Gradio Web Application assembly with Live Webcam and Static Image Detection."""
 
 import logging
-from typing import Any
+
 import gradio as gr
 import numpy as np
 

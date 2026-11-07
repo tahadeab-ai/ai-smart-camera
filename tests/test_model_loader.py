@@ -1,12 +1,12 @@
 """Unit tests for ModelLoader component."""
 
 from pathlib import Path
+
 import pytest
 
 from app.core.model_loader import (
     ModelChecksumMismatchError,
     ModelLoader,
-    ModelLoadingError,
 )
 
 

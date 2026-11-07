@@ -3,6 +3,7 @@
 import argparse
 import logging
 import sys
+
 import torch
 
 from app.config import settings
