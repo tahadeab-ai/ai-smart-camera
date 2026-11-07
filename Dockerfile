@@ -29,8 +29,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install essential system dependencies for OpenCV and networking
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
     libglib2.0-0 \
     libgomp1 \
+    libxcb1 \
+    libx11-6 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
