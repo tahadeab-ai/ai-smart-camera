@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Header, HTTPException, Query, status
 
 from app.config import settings
 from app.services.camera_service import CameraService

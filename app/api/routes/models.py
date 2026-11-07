@@ -36,7 +36,7 @@ def _load_manifest_models(active_model: str) -> list[ModelInfo]:
             )
         ]
 
-    with open(manifest_path, "r", encoding="utf-8") as f:
+    with open(manifest_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
     models_data = data.get("models", {})
@@ -98,4 +98,4 @@ async def switch_model(
                 "code": "MODEL_SWITCH_FAILED",
                 "message": f"Could not switch to model '{payload.model_name}': {e}",
             },
-        )
+        ) from e

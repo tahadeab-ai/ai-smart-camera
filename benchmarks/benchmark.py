@@ -13,11 +13,15 @@ import time
 from pathlib import Path
 from urllib.request import urlretrieve
 
+# Ensure repository root is on sys.path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import cv2
 import numpy as np
 import torch
 
-from app.core.model_loader import ModelLoader
 from app.services.camera_service import CameraService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -81,7 +85,7 @@ def run_benchmark(
     logger.info("Running %d measured evaluation iterations...", measured_runs)
     latencies_ms: list[float] = []
 
-    for i in range(measured_runs):
+    for _ in range(measured_runs):
         if is_cuda:
             torch.cuda.synchronize()
         t0 = time.perf_counter()
@@ -154,7 +158,7 @@ def generate_markdown_report(results_dir: Path, output_file: Path) -> None:
     rows = []
     for jf in json_files:
         try:
-            with open(jf, "r", encoding="utf-8") as f:
+            with open(jf, encoding="utf-8") as f:
                 data = json.load(f)
             meta = data["metadata"]
             m = data["metrics"]

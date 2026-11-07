@@ -1,12 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Camera,
+  AlertCircle,
   Play,
+  Sliders,
   Square,
   SwitchCamera,
-  Sliders,
-  AlertCircle,
-  ShieldCheck,
   VideoOff,
 } from 'lucide-react';
 import { useCamera } from '../hooks/useCamera';

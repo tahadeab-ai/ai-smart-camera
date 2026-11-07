@@ -9,7 +9,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from app.api.dependencies import get_camera_service
 from app.config import settings
-from app.services.stream_manager import StreamConfig, stream_manager
+from app.services.stream_manager import stream_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Stream"])

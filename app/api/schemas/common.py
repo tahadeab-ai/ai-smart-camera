@@ -1,6 +1,7 @@
 """Standardized error envelopes and common schemas."""
 
 from typing import Any
+
 from pydantic import BaseModel, Field
 
 

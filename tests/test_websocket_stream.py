@@ -5,11 +5,11 @@ import json
 import struct
 from unittest.mock import MagicMock, patch
 
-import cv2
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from starlette.websockets import WebSocketDisconnect
 
 from app.api.app import app
 from app.api.dependencies import set_camera_service
@@ -34,9 +34,11 @@ def mock_ws_service():
         service._lock.__enter__ = MagicMock()
         service._lock.__exit__ = MagicMock()
 
-        # Mock inference predict
+        # Mock inference predict on inference_engine
+        mock_engine = MagicMock()
         mock_results = MagicMock()
-        service.inference_engine.predict.return_value = ([mock_results], 10.0)
+        mock_engine.predict.return_value = ([mock_results], 10.0)
+        service.inference_engine = mock_engine
 
         # Mock detector process_results
         mock_detections = MagicMock()
@@ -129,9 +131,10 @@ def test_websocket_auth_rejection(mock_ws_service, monkeypatch):
     client = TestClient(app)
 
     # Handshake with invalid token
-    with pytest.raises(Exception):
-        with client.websocket_connect("/api/v1/stream?token=wrong-key") as ws:
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect("/api/v1/stream?token=wrong-key"):
             pass
+    assert excinfo.value.code == 1008
 
     # Handshake with valid token
     with client.websocket_connect("/api/v1/stream?token=secure-stream-key") as ws:

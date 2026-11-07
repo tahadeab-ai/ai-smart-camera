@@ -113,4 +113,4 @@ async def detect_image(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INFERENCE_ERROR", "message": f"Detection failed: {e}"},
-        )
+        ) from e

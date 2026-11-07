@@ -1,5 +1,5 @@
 import React from 'react';
-import { Camera, Image as ImageIcon, Cpu, Key, Activity } from 'lucide-react';
+import { Camera, Image as ImageIcon, Cpu, Key } from 'lucide-react';
 
 interface NavbarProps {
   activeTab: 'camera' | 'upload' | 'system';
