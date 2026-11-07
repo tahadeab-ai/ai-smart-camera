@@ -1,0 +1,40 @@
+# AI Smart Camera Model Manifest
+# Defines officially supported models, verified checksums, and licensing conditions.
+
+version: "1.0.0"
+default_model: "yolov8n"
+
+models:
+  yolov8n:
+    name: "YOLOv8 Nano"
+    architecture: "YOLOv8"
+    version: "8.4.0"
+    filename: "yolov8n.pt"
+    input_size: [640, 640]
+    classes_count: 80
+    classes_dataset: "COCO"
+    framework: "Ultralytics PyTorch"
+    license: "AGPL-3.0"
+    license_url: "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
+    redistribution_permitted: false
+    source: "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt"
+    sha256: "f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36"
+    size_bytes: 6534387
+    description: "Lightweight object detection model optimized for edge devices and mobile browser streaming."
+
+  yolo11n:
+    name: "YOLO11 Nano"
+    architecture: "YOLO11"
+    version: "8.4.0"
+    filename: "yolo11n.pt"
+    input_size: [640, 640]
+    classes_count: 80
+    classes_dataset: "COCO"
+    framework: "Ultralytics PyTorch"
+    license: "AGPL-3.0"
+    license_url: "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
+    redistribution_permitted: false
+    source: "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt"
+    sha256: "0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1"
+    size_bytes: 5635035
+    description: "Latest generation lightweight YOLO model offering improved feature extraction and latency."
