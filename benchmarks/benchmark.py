@@ -18,11 +18,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import cv2
-import numpy as np
-import torch
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
 
-from app.services.camera_service import CameraService
+from app.services.camera_service import CameraService  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("benchmark")
