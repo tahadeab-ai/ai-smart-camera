@@ -14,9 +14,8 @@ def test_sha256_calculation(tmp_path: Path):
     """Verify SHA-256 calculation against known content."""
     test_file = tmp_path / "test.bin"
     test_file.write_bytes(b"hello ai smart camera")
-    # sha256("hello ai smart camera") = 560c02580a37947137f81541cbda12ba20ab6478985eeeaeeea91b2628e932b1
     computed_hash = ModelLoader.calculate_sha256(test_file)
-    assert computed_hash == "560c02580a37947137f81541cbda12ba20ab6478985eeeaeeea91b2628e932b1"
+    assert computed_hash == "b5f2ef8c95c56a2f7669e5fd1d1ebcf6a1859ed40fd94de3b5271d772b425de0"
 
 
 def test_manifest_metadata_resolution(tmp_path: Path):

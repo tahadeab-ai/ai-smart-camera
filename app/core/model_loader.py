@@ -99,6 +99,10 @@ class ModelLoader:
                 destination.unlink()
             temp_dest.rename(destination)
             return destination
+        except ModelChecksumMismatchError:
+            if temp_dest.exists():
+                temp_dest.unlink()
+            raise
         except Exception as e:
             if temp_dest.exists():
                 temp_dest.unlink()
