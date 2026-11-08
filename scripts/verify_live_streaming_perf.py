@@ -86,7 +86,7 @@ async def verify_streaming_performance(base_url: str, access_token: str, num_fra
                     msg = await ws.receive()
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         data = json.loads(msg.data)
-                        if data.get("type") == "metadata":
+                        if data.get("type") in ("detection", "metadata"):
                             received_metadata.append(data)
                             queue_latencies.append(data.get("queue_latency_ms", 0.0))
                             server_latencies.append(data.get("latency_ms", 0.0))
