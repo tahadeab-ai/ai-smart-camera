@@ -88,8 +88,8 @@ def mock_tracking_service():
 def client(mock_tracking_service):
     """Provides a TestClient initialized with the mocked tracking service."""
     set_camera_service(mock_tracking_service)
-    with TestClient(app) as test_client:
-        yield test_client
+    with patch("app.api.app.CameraService", return_value=mock_tracking_service):
+        yield TestClient(app)
 
 
 def test_session_tracking_isolation():
