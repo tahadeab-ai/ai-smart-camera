@@ -28,8 +28,8 @@ describe('ImageAnalysisView Component', () => {
       },
       annotated_image: 'data:image/jpeg;base64,mock-annotated-base64',
       detections: [
-        { class_name: 'person', confidence: 0.94, x1: 50, y1: 50, x2: 200, y2: 400 },
-        { class_name: 'cat', confidence: 0.88, x1: 250, y1: 200, x2: 350, y2: 320 },
+        { class_id: 0, class_name: 'person', confidence: 0.94, x1: 50, y1: 50, x2: 200, y2: 400 },
+        { class_id: 1, class_name: 'cat', confidence: 0.88, x1: 250, y1: 200, x2: 350, y2: 320 },
       ],
     };
 
