@@ -9,6 +9,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+import supervision as sv
 
 from app.services.camera_service import CameraService
 
@@ -25,33 +26,113 @@ class StreamConfig:
     skip_interval: int = 1
     return_annotated_frame: bool = True
     jpeg_quality: int = 75
+    enable_tracking: bool = True
+    enable_trails: bool = True
+    trace_length: int = 30
+    target_fps: int = 15
 
 
 class StreamSession:
-    """Manages state, history, and frame decimation for a single WebSocket connection."""
+    """Manages state, history, tracking, and frame decimation for a single WebSocket connection."""
 
     def __init__(self, session_id: str, config: StreamConfig | None = None) -> None:
         self.session_id = session_id
         self.config = config or StreamConfig()
         self.frame_counter = 0
         self.last_frame_id = 0
+        self.last_inference_time = 0.0
+
+        # Isolated tracking components per session
+        self.tracker: sv.ByteTrack | None = None
+        self.trace_annotator: sv.TraceAnnotator | None = None
+        self._init_tracker()
 
         # Cached state to eliminate frame-skipping flickering
         self.last_detections: Any = None
         self.last_annotated_jpeg: bytes | None = None
-        self.last_stats: dict[str, Any] = {"total_count": 0, "class_counts": {}}
+        self.last_stats: dict[str, Any] = {
+            "total_count": 0,
+            "class_counts": {},
+            "tracked_count": 0,
+            "tracked_class_counts": {},
+        }
         self.last_boxes: list[dict[str, Any]] = []
 
         # FPS calculation window
         self._timestamps: deque[float] = deque(maxlen=20)
         self._lock = threading.Lock()
 
-    def update_config(self, **kwargs: Any) -> None:
-        """Dynamically updates stream settings (e.g. threshold, skip interval)."""
+    def _init_tracker(self) -> None:
+        """Initializes an isolated ByteTrack and TraceAnnotator instance for this session.
+
+        Effective update rate note:
+        In ByteTrack, `lost_track_buffer` represents an integer count of tracking update steps
+        rather than elapsed real-world seconds. When `skip_interval > 1`, inference updates occur
+        only every N incoming frames. If incoming frame rate is F_in (~12-15 FPS) and skip_interval is 2,
+        the effective tracking update rate F_eff is ~6-8 FPS. A buffer of 30 steps corresponds to
+        ~4-5 seconds of real-world track retention. `frame_rate` provides a reference update rate scale.
+        """
+        effective_fps = max(
+            1, int(self.config.target_fps / max(1, self.config.skip_interval))
+        )
+        self.tracker = sv.ByteTrack(
+            track_activation_threshold=self.config.confidence_threshold,
+            lost_track_buffer=30,
+            minimum_matching_threshold=0.8,
+            frame_rate=effective_fps,
+        )
+        self.trace_annotator = sv.TraceAnnotator(
+            trace_length=self.config.trace_length,
+            thickness=2,
+            color_lookup=sv.ColorLookup.TRACK,
+        )
+
+    def reset_tracker(self) -> None:
+        """Completely resets tracking state, motion trails, and cached frame detections.
+
+        Used on stream initialization, camera switching, or explicit client reset.
+        """
         with self._lock:
+            if self.tracker is not None:
+                try:
+                    self.tracker.reset()
+                except Exception:
+                    pass
+            self._init_tracker()
+            self.last_detections = None
+            self.last_boxes = []
+            self.last_stats = {
+                "total_count": 0,
+                "class_counts": {},
+                "tracked_count": 0,
+                "tracked_class_counts": {},
+            }
+            self.last_annotated_jpeg = None
+            logger.info("Session %s tracker and trace history completely reset.", self.session_id)
+
+    def update_config(self, **kwargs: Any) -> None:
+        """Dynamically updates stream settings (e.g. threshold, skip interval, tracking)."""
+        with self._lock:
+            reinit_tracker = False
             for k, v in kwargs.items():
                 if hasattr(self.config, k):
                     setattr(self.config, k, v)
+                    if k in ("trace_length", "target_fps", "skip_interval", "confidence_threshold"):
+                        reinit_tracker = True
+
+            if reinit_tracker:
+                effective_fps = max(
+                    1, int(self.config.target_fps / max(1, self.config.skip_interval))
+                )
+                if self.tracker is not None:
+                    self.tracker.track_activation_threshold = self.config.confidence_threshold
+                    self.tracker.frame_rate = effective_fps
+                if self.trace_annotator is not None:
+                    self.trace_annotator = sv.TraceAnnotator(
+                        trace_length=self.config.trace_length,
+                        thickness=2,
+                        color_lookup=sv.ColorLookup.TRACK,
+                    )
         logger.debug("Session %s updated config: %s", self.session_id, self.config)
 
     def calculate_fps(self) -> float:
@@ -144,28 +225,83 @@ class StreamSession:
                 image_size=640,
             )
 
-            detections = camera_service.detector.process_results(
+            raw_detections = camera_service.detector.process_results(
                 results=results,
                 filter_classes=self.config.filter_classes or None,
                 min_confidence=self.config.confidence_threshold,
             )
             model_inference_ms = round((time.perf_counter() - model_start_t) * 1000, 2)
 
+            # 1. Calculate raw detection statistics BEFORE ByteTrack
+            raw_stats = camera_service.counter.count(
+                detections=raw_detections,
+                class_names=camera_service.detector.class_names,
+            )
+            raw_total_count = raw_stats.get("total_count", 0)
+            raw_class_counts = raw_stats.get("class_counts", {})
+
+            # 2. Update with ByteTrack (per-session tracker)
+            if self.config.enable_tracking and self.tracker is not None:
+                tracked_detections = self.tracker.update_with_detections(raw_detections)
+            else:
+                tracked_detections = raw_detections
+
+            # 3. Calculate tracked object statistics AFTER tracking
+            tracked_count = 0
+            tracked_class_counts: dict[str, int] = {}
+            if (
+                hasattr(tracked_detections, "tracker_id")
+                and tracked_detections.tracker_id is not None
+            ):
+                for idx, tid in enumerate(tracked_detections.tracker_id):
+                    if tid is not None:
+                        tracked_count += 1
+                        cid = (
+                            int(tracked_detections.class_id[idx])
+                            if tracked_detections.class_id is not None
+                            else -1
+                        )
+                        cname = camera_service.detector.class_names.get(cid, str(cid))
+                        tracked_class_counts[cname] = (
+                            tracked_class_counts.get(cname, 0) + 1
+                        )
+
             ann_start_t = time.perf_counter()
+            annotated_rgb = rgb_frame.copy()
+
+            # 4. Render motion trails if tracking and trails enabled (session-isolated)
+            if (
+                self.config.enable_tracking
+                and self.config.enable_trails
+                and self.trace_annotator is not None
+                and hasattr(tracked_detections, "tracker_id")
+                and tracked_detections.tracker_id is not None
+                and len(tracked_detections) > 0
+            ):
+                try:
+                    annotated_rgb = self.trace_annotator.annotate(
+                        scene=annotated_rgb, detections=tracked_detections
+                    )
+                except Exception as e:
+                    logger.warning("TraceAnnotator error: %s", e)
+
+            # 5. Render bounding boxes and labels (stateless shared annotator)
             annotated_rgb = camera_service.annotator.annotate(
-                scene=rgb_frame,
-                detections=detections,
+                scene=annotated_rgb,
+                detections=tracked_detections,
                 class_names=camera_service.detector.class_names,
                 show_confidence=True,
             )
 
-            stats = camera_service.counter.count(
-                detections=detections,
-                class_names=camera_service.detector.class_names,
-            )
-
-            boxes = camera_service._extract_boxes(detections)
+            boxes = camera_service._extract_boxes(tracked_detections)
             annotation_ms = round((time.perf_counter() - ann_start_t) * 1000, 2)
+
+        stats = {
+            "total_count": raw_total_count,
+            "class_counts": raw_class_counts,
+            "tracked_count": tracked_count,
+            "tracked_class_counts": tracked_class_counts,
+        }
 
         # Encode annotated image if requested
         annotated_bytes = None
@@ -180,10 +316,11 @@ class StreamSession:
                 annotated_bytes = encoded.tobytes()
 
         # Update cache for smooth frame decimation
-        self.last_detections = detections
+        self.last_detections = tracked_detections
         self.last_stats = stats
         self.last_boxes = boxes
         self.last_annotated_jpeg = annotated_bytes
+        self.last_inference_time = time.time()
 
         total_processing_ms = round((time.perf_counter() - frame_start_t) * 1000, 2)
 

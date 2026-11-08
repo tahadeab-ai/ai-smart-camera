@@ -53,6 +53,9 @@ class VisionAnnotator:
 
         # Generate labels
         labels = []
+        has_tracker = (
+            hasattr(detections, "tracker_id") and detections.tracker_id is not None
+        )
         for i in range(len(detections)):
             class_id = int(detections.class_id[i]) if detections.class_id is not None else -1
             confidence = (
@@ -67,10 +70,14 @@ class VisionAnnotator:
                 else f"ID:{class_id}"
             )
 
+            tracker_prefix = ""
+            if has_tracker and detections.tracker_id[i] is not None:
+                tracker_prefix = f"#{int(detections.tracker_id[i])} "
+
             if show_confidence:
-                labels.append(f"{class_label} {confidence:.0%}")
+                labels.append(f"{tracker_prefix}{class_label} {confidence:.0%}")
             else:
-                labels.append(class_label)
+                labels.append(f"{tracker_prefix}{class_label}")
 
         # Apply Supervision annotators
         annotated_scene = self.box_annotator.annotate(

@@ -55,11 +55,11 @@ def mock_ws_service():
         service.inference_engine = mock_engine
 
         # Mock detector process_results
-        mock_detections = MagicMock()
-        mock_detections.__len__ = MagicMock(return_value=1)
-        mock_detections.xyxy = np.array([[10, 20, 100, 200]], dtype=np.float32)
-        mock_detections.confidence = np.array([0.95], dtype=np.float32)
-        mock_detections.class_id = np.array([0], dtype=np.int32)
+        mock_detections = sv.Detections(
+            xyxy=np.array([[10, 20, 100, 200]], dtype=np.float32),
+            confidence=np.array([0.95], dtype=np.float32),
+            class_id=np.array([0], dtype=np.int32),
+        )
         service.detector.process_results.return_value = mock_detections
 
         # Mock annotator

@@ -124,9 +124,26 @@ async def websocket_camera_stream(
                             jpeg_quality=payload.get(
                                 "jpeg_quality", session.config.jpeg_quality
                             ),
+                            enable_tracking=payload.get(
+                                "enable_tracking", session.config.enable_tracking
+                            ),
+                            enable_trails=payload.get(
+                                "enable_trails", session.config.enable_trails
+                            ),
+                            trace_length=payload.get(
+                                "trace_length", session.config.trace_length
+                            ),
+                            target_fps=payload.get(
+                                "target_fps", session.config.target_fps
+                            ),
                         )
                         await websocket.send_text(
                             json.dumps({"type": "config_ack", "status": "ok"})
+                        )
+                    elif msg_type == "reset_tracker":
+                        session.reset_tracker()
+                        await websocket.send_text(
+                            json.dumps({"type": "reset_tracker_ack", "status": "ok"})
                         )
                     elif msg_type == "ping":
                         await websocket.send_text(json.dumps({"type": "pong"}))
@@ -212,4 +229,5 @@ async def websocket_camera_stream(
     except Exception as e:
         logger.error("Unexpected WebSocket error on session %s: %s", session_id, e)
     finally:
+        session.reset_tracker()
         stream_manager.remove_session(session_id)

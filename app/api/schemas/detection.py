@@ -13,14 +13,26 @@ class BoundingBox(BaseModel):
     confidence: float = Field(..., description="Detection confidence score between 0.0 and 1.0")
     class_id: int = Field(..., description="COCO or dataset class ID")
     class_name: str = Field(..., description="Human-readable category name")
+    tracker_id: int | None = Field(
+        default=None,
+        description="Persistent tracking ID assigned by ByteTrack (null for static images or when tracking is disabled)",
+    )
 
 
 class DetectionStats(BaseModel):
     """Aggregate statistics for detected objects."""
 
-    total_count: int = Field(..., description="Total number of detected objects")
+    total_count: int = Field(..., description="Total number of raw detected objects")
     class_counts: dict[str, int] = Field(
-        default_factory=dict, description="Counts broken down per category"
+        default_factory=dict, description="Raw counts broken down per category"
+    )
+    tracked_count: int = Field(
+        default=0,
+        description="Total number of currently tracked objects with active tracking IDs",
+    )
+    tracked_class_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Tracked object counts broken down per category",
     )
 
 
@@ -47,6 +59,10 @@ class StreamClientConfig(BaseModel):
     skip_interval: int = Field(default=1, ge=1, le=10)
     return_annotated_frame: bool = Field(default=True)
     jpeg_quality: int = Field(default=75, ge=10, le=100)
+    enable_tracking: bool = Field(default=True, description="Enable ByteTrack multi-object tracking")
+    enable_trails: bool = Field(default=True, description="Enable motion trail rendering")
+    trace_length: int = Field(default=30, ge=1, le=100, description="Maximum trail length in frames")
+    target_fps: int = Field(default=15, ge=1, le=60, description="Target streaming frame rate")
 
 
 class StreamMetadata(BaseModel):
