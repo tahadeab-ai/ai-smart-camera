@@ -185,12 +185,20 @@ def create_app() -> FastAPI:
         # Check if direct file exists in dist
         file_path = dist_dir / full_path
         if file_path.is_file():
+            if file_path.name == "index.html":
+                return FileResponse(
+                    file_path,
+                    headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+                )
             return FileResponse(file_path)
 
         # Fallback to index.html for SPA client-side routing
         index_file = dist_dir / "index.html"
         if index_file.is_file():
-            return FileResponse(index_file)
+            return FileResponse(
+                index_file,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
 
         # Fallback if frontend has not been compiled yet
         return HTMLResponse(

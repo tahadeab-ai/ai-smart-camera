@@ -97,6 +97,23 @@ describe('useWebSocket', () => {
     expect(result.current.error).toContain('Authentication required');
   });
 
+  it('sends reset_tracker command over websocket', async () => {
+    const { result } = renderHook(() => useWebSocket());
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    const ws = MockWebSocket.instances[0];
+    ws.readyState = WebSocket.OPEN;
+
+    act(() => {
+      result.current.sendResetTracker();
+    });
+
+    expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'reset_tracker' }));
+  });
+
   it('cleans up on disconnect', async () => {
     const { result } = renderHook(() => useWebSocket());
 

@@ -36,7 +36,11 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
   // Internal connection executor
   const executeConnect = useCallback(async () => {
-    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+    if (
+      wsRef.current &&
+      (wsRef.current.readyState === WebSocket.OPEN ||
+        wsRef.current.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
 
@@ -49,7 +53,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       ticket = ticketRes.ticket;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('401') || msg.includes('Unauthorized')) {
+      if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('Authentication')) {
         setError('Authentication required: invalid or missing access token.');
         return; // A failed ticket request must stop the connection attempt
       }
@@ -82,9 +86,11 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       ws.onmessage = (event: MessageEvent) => {
         if (typeof event.data === 'string') {
           try {
-            const meta = JSON.parse(event.data) as StreamMetadata;
-            if (meta.type === 'detection' && onMetadata) {
-              onMetadata(meta);
+            const data = JSON.parse(event.data);
+            if (data.type === 'detection' && onMetadata) {
+              onMetadata(data as StreamMetadata);
+            } else if (data.type === 'reset_tracker_ack') {
+              console.debug('Backend tracker reset confirmed');
             }
           } catch (e) {
             console.warn('Failed to parse WebSocket text message:', e);
@@ -118,7 +124,10 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
         }
 
         // Schedule auto-reconnect if closure was unexpected
-        if (!isManualDisconnectRef.current && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+        if (
+          !isManualDisconnectRef.current &&
+          reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS
+        ) {
           const attempt = reconnectAttemptsRef.current;
           const delay = Math.min(
             MAX_RECONNECT_DELAY_MS,
@@ -127,7 +136,11 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
           const jitter = Math.random() * 500;
           const totalDelay = Math.round(delay + jitter);
 
-          console.warn(`WebSocket disconnected. Reconnecting in ${totalDelay}ms (attempt ${attempt + 1}/${MAX_RECONNECT_ATTEMPTS})...`);
+          console.warn(
+            `WebSocket disconnected. Reconnecting in ${totalDelay}ms (attempt ${
+              attempt + 1
+            }/${MAX_RECONNECT_ATTEMPTS})...`
+          );
           reconnectAttemptsRef.current += 1;
 
           reconnectTimeoutRef.current = window.setTimeout(() => {
@@ -204,6 +217,14 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     }
   }, []);
 
+  // Explicitly reset server-side ByteTrack tracker and trace annotations
+  const sendResetTracker = useCallback(() => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'reset_tracker' }));
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
       disconnect();
@@ -217,5 +238,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     disconnect,
     sendFrame,
     sendConfig,
+    sendResetTracker,
   };
 }

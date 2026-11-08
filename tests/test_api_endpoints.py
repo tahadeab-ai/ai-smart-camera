@@ -97,6 +97,16 @@ def test_health_ready(client, mock_service):
     assert response.json()["status"] == "ready"
 
 
+def test_system_version(client):
+    """GET /api/v1/system/version returns 200 and version metadata."""
+    response = client.get("/api/v1/system/version")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["version"] == "0.2.2"
+    assert "commit_sha" in data
+
+
+
 def test_system_info(client, mock_service):
     """GET /api/v1/system/info returns telemetry."""
     response = client.get("/api/v1/system/info")

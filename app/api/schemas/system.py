@@ -60,3 +60,11 @@ class ModelSwitchResponse(BaseModel):
     active_model: str
     device: str
     classes_count: int
+
+
+class VersionResponse(BaseModel):
+    """Application version and git commit metadata."""
+
+    version: str = Field(..., example="0.2.2")
+    commit_sha: str = Field(..., example="a46c046")
+
