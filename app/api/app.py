@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.dependencies import set_camera_service
+from app.api.routes.auth import router as auth_router
 from app.api.routes.detection import router as detection_router
 from app.api.routes.health import router as health_router
 from app.api.routes.models import router as models_router
@@ -48,7 +49,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Smart Camera API",
         description="High-performance edge-ready Computer Vision backend with YOLO, Supervision, and WebSockets.",
-        version="0.2.0",
+        version="0.2.1",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/api/v1/openapi.json",
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": error_obj},
+            headers=exc.headers,
         )
 
     @app.exception_handler(Exception)
@@ -98,6 +100,7 @@ def create_app() -> FastAPI:
     # Wire API routers under /api/v1 prefix
     api_v1_prefix = "/api/v1"
     app.include_router(health_router, prefix=api_v1_prefix)
+    app.include_router(auth_router, prefix=api_v1_prefix)
     app.include_router(system_router, prefix=api_v1_prefix)
     app.include_router(models_router, prefix=api_v1_prefix)
     app.include_router(detection_router, prefix=api_v1_prefix)
@@ -130,7 +133,7 @@ def create_app() -> FastAPI:
         return HTMLResponse(
             content="""<!DOCTYPE html>
 <html>
-<head><title>AI Smart Camera v0.2.0</title>
+<head><title>AI Smart Camera v0.2.1</title>
 <style>
 body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
 .card { background: #1e293b; padding: 2.5rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); max-width: 520px; text-align: center; border: 1px solid #334155; }
@@ -142,7 +145,7 @@ a:hover { text-decoration: underline; }
 </head>
 <body>
 <div class="card">
-  <h1>AI Smart Camera <span class="badge">v0.2.0</span></h1>
+  <h1>AI Smart Camera <span class="badge">v0.2.1</span></h1>
   <p>FastAPI backend is running and ready.</p>
   <p>Explore the interactive API documentation at <a href="/docs">/docs</a> or <a href="/redoc">/redoc</a>.</p>
   <p><small style="color: #94a3b8;">Compile the React frontend into <code>frontend/dist</code> to view the full web application interface.</small></p>

@@ -23,7 +23,7 @@ logger = logging.getLogger("ai_smart_camera")
 def parse_args() -> argparse.Namespace:
     """Parses command-line arguments overriding environment configuration."""
     parser = argparse.ArgumentParser(
-        description="AI Smart Camera v0.2.0 - FastAPI Backend & Real-time Vision"
+        description="AI Smart Camera v0.2.1 - FastAPI Backend & Real-time Vision"
     )
     parser.add_argument("--host", type=str, default=settings.app_host, help="Host address to bind")
     parser.add_argument("--port", type=int, default=settings.app_port, help="Port to listen on")
@@ -85,7 +85,7 @@ def run_app() -> None:
 
     # Default Mode: Production FastAPI Backend
     logger.info(
-        "Launching AI Smart Camera v0.2.0 FastAPI server on %s:%s (device: %s)...",
+        "Launching AI Smart Camera v0.2.1 FastAPI server on %s:%s (device: %s)...",
         args.host,
         args.port,
         args.device,

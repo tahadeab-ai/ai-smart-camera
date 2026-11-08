@@ -12,6 +12,7 @@ export function useCamera(options: UseCameraOptions = {}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const isTransitioningRef = useRef<boolean>(false);
 
   const [isActive, setIsActive] = useState<boolean>(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>(idealFacingMode);
@@ -19,7 +20,7 @@ export function useCamera(options: UseCameraOptions = {}) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
 
-  // Enumerate video devices
+  // Enumerate video input devices safely
   const updateDevices = useCallback(async () => {
     try {
       if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -38,27 +39,78 @@ export function useCamera(options: UseCameraOptions = {}) {
     updateDevices();
   }, [updateDevices]);
 
-  // Start video stream
+  // Cleanly stop any existing active stream tracks
+  const stopTracks = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          // Ignore
+        }
+      });
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  // Stop camera and reset active state
+  const stopCamera = useCallback(() => {
+    isTransitioningRef.current = false;
+    stopTracks();
+    setIsActive(false);
+  }, [stopTracks]);
+
+  // Start or transition video stream
   const startCamera = useCallback(async () => {
+    if (isTransitioningRef.current) return;
+    isTransitioningRef.current = true;
     setError(null);
+
+    // Stop existing tracks first to avoid camera hardware lockups
+    stopTracks();
+
+    const buildConstraints = (useDeviceId: boolean): MediaStreamConstraints => ({
+      audio: false,
+      video: useDeviceId && selectedDeviceId
+        ? { deviceId: { exact: selectedDeviceId }, width: { ideal: width }, height: { ideal: height } }
+        : { facingMode, width: { ideal: width }, height: { ideal: height } },
+    });
+
     try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(buildConstraints(true));
+      } catch (err: unknown) {
+        // Fallback if exact deviceId constraints were overconstrained
+        if (err instanceof DOMException && (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError')) {
+          console.warn('Overconstrained deviceId, falling back to facingMode constraint...');
+          stream = await navigator.mediaDevices.getUserMedia(buildConstraints(false));
+        } else {
+          throw err;
+        }
       }
 
-      const constraints: MediaStreamConstraints = {
-        audio: false,
-        video: selectedDeviceId
-          ? { deviceId: { exact: selectedDeviceId }, width: { ideal: width }, height: { ideal: height } }
-          : { facingMode, width: { ideal: width }, height: { ideal: height } },
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        // Wait for metadata load
+        if (video.readyState < 1) {
+          await new Promise<void>((resolve) => {
+            const onMeta = () => {
+              video.removeEventListener('loadedmetadata', onMeta);
+              resolve();
+            };
+            video.addEventListener('loadedmetadata', onMeta);
+          });
+        }
+        await video.play().catch((playErr) => {
+          console.warn('Autoplay prevented or interrupted:', playErr);
+        });
       }
 
       setIsActive(true);
@@ -67,23 +119,14 @@ export function useCamera(options: UseCameraOptions = {}) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(`Camera access error: ${msg}`);
       setIsActive(false);
+      stopTracks();
+    } finally {
+      isTransitioningRef.current = false;
     }
-  }, [facingMode, height, selectedDeviceId, updateDevices, width]);
-
-  // Stop video stream
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setIsActive(false);
-  }, []);
+  }, [facingMode, height, selectedDeviceId, stopTracks, updateDevices, width]);
 
   // Toggle front/rear camera
-  const toggleFacingMode = useCallback(() => {
+  const toggleFacingMode = useCallback(async () => {
     setSelectedDeviceId('');
     setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
   }, []);
@@ -91,8 +134,10 @@ export function useCamera(options: UseCameraOptions = {}) {
   // Capture current video frame to JPEG bytes
   const captureFrameJpeg = useCallback(
     async (quality: number = 0.75): Promise<Uint8Array | null> => {
+      if (isTransitioningRef.current) return null;
+
       const video = videoRef.current;
-      if (!video || video.readyState < 2 || !video.videoWidth) {
+      if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
         return null;
       }
 

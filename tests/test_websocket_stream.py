@@ -1,8 +1,9 @@
-"""Unit tests for WebSocket camera streaming protocol."""
+"""Unit tests for WebSocket camera streaming protocol with authentication, origin validation, and concurrency."""
 
 import io
 import json
 import struct
+import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -15,6 +16,17 @@ from app.api.app import app
 from app.api.dependencies import set_camera_service
 from app.config import settings
 from app.services.camera_service import CameraService
+from app.services.stream_manager import stream_manager
+from app.services.ticket_manager import ticket_manager
+
+
+@pytest.fixture(autouse=True)
+def reset_state():
+    """Resets stream sessions and tickets between tests."""
+    ticket_manager.clear()
+    with stream_manager._lock:
+        stream_manager._sessions.clear()
+        stream_manager._reserved_slots.clear()
 
 
 @pytest.fixture
@@ -84,7 +96,7 @@ def create_test_jpeg_bytes() -> bytes:
 
 
 def test_websocket_stream_flow(mock_ws_service):
-    """Tests the full WebSocket streaming protocol."""
+    """Tests the full WebSocket streaming protocol with decomposed metrics."""
     client = TestClient(app)
 
     with client.websocket_connect("/api/v1/stream") as ws:
@@ -101,43 +113,99 @@ def test_websocket_stream_flow(mock_ws_service):
         assert ack["type"] == "config_ack"
         assert ack["status"] == "ok"
 
-        # 2. Send binary JPEG frame with 4-byte frame_id (e.g. frame_id = 101)
+        # 2. Send binary JPEG frame with 4-byte frame_id
         jpeg_bytes = create_test_jpeg_bytes()
         frame_id = 101
         header = struct.pack("!I", frame_id)
         ws.send_bytes(header + jpeg_bytes)
 
-        # 3. Receive JSON metadata
+        # 3. Receive JSON metadata and verify timing decomposition
         meta_text = ws.receive_text()
         meta = json.loads(meta_text)
         assert meta["type"] == "detection"
         assert meta["frame_id"] == frame_id
         assert meta["stats"]["total_count"] == 1
         assert meta["stats"]["class_counts"]["person"] == 1
-        assert meta["skipped"] is False
+        assert meta["frame_skipped"] is False
+        assert "model_inference_ms" in meta
+        assert "annotation_ms" in meta
+        assert "frame_processing_ms" in meta
 
         # 4. Receive paired annotated binary frame
         binary_resp = ws.receive_bytes()
         resp_frame_id = struct.unpack("!I", binary_resp[:4])[0]
         assert resp_frame_id == frame_id
         resp_jpeg = binary_resp[4:]
-        # Verify starts with JPEG SOI marker 0xFF 0xD8
         assert resp_jpeg[:2] == b"\xff\xd8"
 
 
-def test_websocket_auth_rejection(mock_ws_service, monkeypatch):
-    """Tests that WebSocket disconnects with policy violation when token is invalid."""
-    monkeypatch.setattr(settings, "access_token", "secure-stream-key")
+def test_websocket_ticket_single_use(mock_ws_service, monkeypatch):
+    """Tests that a single-use ticket can connect once and cannot be reused."""
+    monkeypatch.setattr(settings, "access_token", "master-secret")
     client = TestClient(app)
 
-    # Handshake with invalid token
-    with pytest.raises(WebSocketDisconnect) as excinfo:
-        with client.websocket_connect("/api/v1/stream?token=wrong-key"):
-            pass
-    assert excinfo.value.code == 1008
+    ticket = ticket_manager.create_ticket(client_id="test-client")
 
-    # Handshake with valid token
-    with client.websocket_connect("/api/v1/stream?token=secure-stream-key") as ws:
+    # First connection with ticket succeeds
+    with client.websocket_connect(f"/api/v1/stream?ticket={ticket}") as ws:
         ws.send_text(json.dumps({"type": "ping"}))
         pong = json.loads(ws.receive_text())
         assert pong["type"] == "pong"
+
+    # Second connection reusing the same ticket must be rejected with 1008
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(f"/api/v1/stream?ticket={ticket}"):
+            pass
+    assert excinfo.value.code == 1008
+
+
+def test_websocket_expired_ticket_rejection(mock_ws_service, monkeypatch):
+    """Tests that an expired ticket is rejected."""
+    monkeypatch.setattr(settings, "access_token", "master-secret")
+    client = TestClient(app)
+
+    # Issue ticket and artificially expire it
+    ticket = ticket_manager.create_ticket(client_id="test-client")
+    with ticket_manager._lock:
+        ticket_manager._tickets[ticket].expires_at = time.time() - 10.0
+
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(f"/api/v1/stream?ticket={ticket}"):
+            pass
+    assert excinfo.value.code == 1008
+
+
+def test_websocket_origin_validation(mock_ws_service, monkeypatch):
+    """Tests that origins not in cors_origins are rejected with 1008."""
+    monkeypatch.setattr(settings, "cors_origins", ["https://trusted-domain.com"])
+    client = TestClient(app)
+
+    # Disallowed origin
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(
+            "/api/v1/stream", headers={"Origin": "https://malicious-site.com"}
+        ):
+            pass
+    assert excinfo.value.code == 1008
+
+    # Allowed origin
+    with client.websocket_connect(
+        "/api/v1/stream", headers={"Origin": "https://trusted-domain.com"}
+    ) as ws:
+        ws.send_text(json.dumps({"type": "ping"}))
+        pong = json.loads(ws.receive_text())
+        assert pong["type"] == "pong"
+
+
+def test_websocket_concurrency_limit_exceeded(mock_ws_service, monkeypatch):
+    """Tests that exceeding max_concurrent_streams rejects incoming connection with 1013."""
+    monkeypatch.setattr(settings, "max_concurrent_streams", 1)
+    monkeypatch.setattr(stream_manager, "max_concurrent", 1)
+    client = TestClient(app)
+
+    with client.websocket_connect("/api/v1/stream"):
+        # Second simultaneous connection exceeds limit of 1
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            with client.websocket_connect("/api/v1/stream"):
+                pass
+        assert excinfo.value.code == 1013

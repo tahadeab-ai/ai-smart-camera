@@ -2,7 +2,7 @@ name: CI - Code Quality & Automated Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, "hardening/**"]
   pull_request:
     branches: [main]
 
@@ -35,7 +35,7 @@ jobs:
           pytest -v tests/ --cov=app --cov-report=term-missing
 
   frontend-build-and-typecheck:
-    name: Frontend TypeScript & Build
+    name: Frontend TypeScript, Tests & Build
     runs-on: ubuntu-latest
 
     steps:
@@ -51,7 +51,16 @@ jobs:
 
       - name: Install Frontend Dependencies
         working-directory: frontend
-        run: npm install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Run Frontend Unit Tests
+        working-directory: frontend
+        run: npm test
 
       - name: TypeScript Type Check & Vite Production Build
         working-directory: frontend

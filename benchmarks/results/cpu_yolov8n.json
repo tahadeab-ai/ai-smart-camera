@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "timestamp": 1794118348.169971,
+    "model_name": "yolov8n",
+    "device": "cpu",
+    "torch_version": "2.6.0+cu124",
+    "python_version": "3.13.18",
+    "platform": "Linux 6.6.159+ (x86_64)",
+    "warmup_runs": 5,
+    "measured_runs": 30,
+    "image_size": "810x1080",
+    "detected_objects": 5
+  },
+  "metrics": {
+    "mean_latency_ms": 203.7,
+    "median_p50_ms": 181.13,
+    "p95_latency_ms": 267.43,
+    "p99_latency_ms": 269.76,
+    "min_latency_ms": 159.36,
+    "max_latency_ms": 270.53,
+    "std_dev_ms": 41.11,
+    "throughput_fps": 4.9
+  }
+}

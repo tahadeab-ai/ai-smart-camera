@@ -4,9 +4,37 @@ import {
   SystemInfo,
 } from '../types';
 
+let inMemoryToken: string | null = null;
+
 export class ApiClient {
+  static setToken(token: string | null): void {
+    inMemoryToken = token;
+    if (token) {
+      try {
+        localStorage.setItem('ai_cam_token', token);
+      } catch {
+        // LocalStorage might be disabled in private mode
+      }
+    } else {
+      try {
+        localStorage.removeItem('ai_cam_token');
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
+  static getToken(): string | null {
+    if (inMemoryToken) return inMemoryToken;
+    try {
+      return localStorage.getItem('ai_cam_token');
+    } catch {
+      return null;
+    }
+  }
+
   private static getHeaders(extraHeaders: HeadersInit = {}): HeadersInit {
-    const token = localStorage.getItem('ai_cam_token');
+    const token = this.getToken();
     const headers: Record<string, string> = { ...extraHeaders } as Record<string, string>;
     if (token) {
       headers['X-Access-Token'] = token;
@@ -46,6 +74,18 @@ export class ApiClient {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error?.message || `Failed to switch model: ${res.statusText}`);
     }
+  }
+
+  static async getWsTicket(): Promise<{ ticket: string; expires_in: number }> {
+    const res = await fetch('/api/v1/auth/ws-ticket', {
+      method: 'POST',
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Failed to acquire WS ticket: ${res.statusText}`);
+    }
+    return res.json();
   }
 
   static async detectImage(
