@@ -1,10 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ApiClient } from '../api/client';
 
 describe('ApiClient', () => {
   beforeEach(() => {
     ApiClient.setToken(null);
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('manages tokens in memory and headers', () => {
@@ -14,28 +18,30 @@ describe('ApiClient', () => {
   });
 
   it('fetches health status', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ status: 'ok', version: '0.2.1' }),
     } as Response);
+    vi.stubGlobal('fetch', mockFetch);
 
     const health = await ApiClient.getHealth();
     expect(health.status).toBe('ok');
     expect(health.version).toBe('0.2.1');
-    expect(global.fetch).toHaveBeenCalledWith('/api/v1/health/live');
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/health/live');
   });
 
   it('requests WebSocket ticket with auth header', async () => {
     ApiClient.setToken('auth-secret');
-    global.fetch = vi.fn().mockResolvedValue({
+    const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ ticket: 'single-use-ticket-123', expires_in: 30 }),
     } as Response);
+    vi.stubGlobal('fetch', mockFetch);
 
     const res = await ApiClient.getWsTicket();
     expect(res.ticket).toBe('single-use-ticket-123');
     expect(res.expires_in).toBe(30);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(mockFetch).toHaveBeenCalledWith(
       '/api/v1/auth/ws-ticket',
       expect.objectContaining({
         method: 'POST',
