@@ -109,4 +109,25 @@ describe('useCamera', () => {
     expect(mockTrack.stop).toHaveBeenCalled();
     expect(result.current.isActive).toBe(false);
   });
+
+  it('returns true on successful camera start and false on permission error', async () => {
+    const { result } = renderHook(() => useCamera());
+
+    let success: boolean | undefined;
+    await act(async () => {
+      success = await result.current.startCamera();
+    });
+    expect(success).toBe(true);
+    expect(result.current.isActive).toBe(true);
+
+    // Now test failure scenario
+    mockGetUserMedia.mockRejectedValueOnce(new DOMException('Permission denied', 'NotAllowedError'));
+    let failureResult: boolean | undefined;
+    await act(async () => {
+      failureResult = await result.current.startCamera();
+    });
+    expect(failureResult).toBe(false);
+    expect(result.current.isActive).toBe(false);
+    expect(result.current.error).toContain('Permission denied');
+  });
 });

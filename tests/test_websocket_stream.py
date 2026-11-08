@@ -142,6 +142,7 @@ def test_websocket_stream_flow(mock_ws_service):
         assert resp_frame_id == frame_id
         resp_jpeg = binary_resp[4:]
         assert resp_jpeg[:2] == b"\xff\xd8"
+        ws.close()
 
 
 def test_websocket_ticket_single_use(mock_ws_service, monkeypatch):
@@ -158,6 +159,7 @@ def test_websocket_ticket_single_use(mock_ws_service, monkeypatch):
         ws.send_text(json.dumps({"type": "ping"}))
         pong = json.loads(ws.receive_text())
         assert pong["type"] == "pong"
+        ws.close()
 
     # Second connection reusing the same ticket must be rejected with 1008
     with pytest.raises(WebSocketDisconnect) as excinfo:
@@ -233,6 +235,7 @@ def test_websocket_origin_validation(mock_ws_service, monkeypatch):
         ws.send_text(json.dumps({"type": "ping"}))
         pong = json.loads(ws.receive_text())
         assert pong["type"] == "pong"
+        ws.close()
 
 
 def test_websocket_rejects_missing_origin_by_default(mock_ws_service, monkeypatch):
@@ -277,6 +280,7 @@ def test_websocket_frame_size_limit(mock_ws_service, monkeypatch):
         resp = json.loads(resp_text)
         assert resp["type"] == "error"
         assert "exceeds" in resp["message"]
+        ws.close()
 
 
 def test_websocket_rejects_non_jpeg_frame(mock_ws_service):
@@ -292,6 +296,7 @@ def test_websocket_rejects_non_jpeg_frame(mock_ws_service):
         resp = json.loads(resp_text)
         assert resp["type"] == "error"
         assert "JPEG" in resp["message"]
+        ws.close()
 
 
 def test_websocket_concurrency_limit_exceeded(mock_ws_service, monkeypatch):
@@ -302,7 +307,7 @@ def test_websocket_concurrency_limit_exceeded(mock_ws_service, monkeypatch):
 
     with client.websocket_connect(
         "/api/v1/stream", headers={"Origin": VALID_ORIGIN}
-    ):
+    ) as ws1:
         # Second simultaneous connection exceeds limit of 1
         with pytest.raises(WebSocketDisconnect) as excinfo:
             with client.websocket_connect(
@@ -310,3 +315,4 @@ def test_websocket_concurrency_limit_exceeded(mock_ws_service, monkeypatch):
             ):
                 pass
         assert excinfo.value.code == 1013
+        ws1.close()

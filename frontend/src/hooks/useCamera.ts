@@ -64,8 +64,8 @@ export function useCamera(options: UseCameraOptions = {}) {
 
   // Hardware camera transition (implements full 9-step lifecycle)
   const switchCamera = useCallback(
-    async (nextFacingMode?: 'user' | 'environment', nextDeviceId?: string) => {
-      if (isTransitioningRef.current) return;
+    async (nextFacingMode?: 'user' | 'environment', nextDeviceId?: string): Promise<boolean> => {
+      if (isTransitioningRef.current) return false;
       isTransitioningRef.current = true;
       setIsTransitioning(true);
       setError(null);
@@ -132,12 +132,14 @@ export function useCamera(options: UseCameraOptions = {}) {
         // 8. Resume frame transmission
         setIsActive(true);
         await updateDevices();
+        return true;
       } catch (err: unknown) {
         // 9. Display errors correctly if switching fails
         const msg = err instanceof Error ? err.message : String(err);
         setError(`Camera switch error: ${msg}`);
         setIsActive(false);
         stopTracks();
+        return false;
       } finally {
         isTransitioningRef.current = false;
         setIsTransitioning(false);
@@ -146,29 +148,31 @@ export function useCamera(options: UseCameraOptions = {}) {
     [facingMode, height, selectedDeviceId, stopTracks, updateDevices, width]
   );
 
-  // Start video stream
-  const startCamera = useCallback(async () => {
-    await switchCamera(facingMode, selectedDeviceId);
+  // Start video stream with explicit boolean outcome
+  const startCamera = useCallback(async (): Promise<boolean> => {
+    return await switchCamera(facingMode, selectedDeviceId);
   }, [facingMode, selectedDeviceId, switchCamera]);
 
   // Toggle front/rear camera with live hardware switching
-  const toggleFacingMode = useCallback(async () => {
+  const toggleFacingMode = useCallback(async (): Promise<boolean> => {
     const next = facingMode === 'user' ? 'environment' : 'user';
     if (isActive) {
-      await switchCamera(next, '');
+      return await switchCamera(next, '');
     } else {
       setFacingMode(next);
       setSelectedDeviceId('');
+      return true;
     }
   }, [facingMode, isActive, switchCamera]);
 
   // Select explicit device ID with live hardware switching
   const selectDevice = useCallback(
-    async (deviceId: string) => {
+    async (deviceId: string): Promise<boolean> => {
       if (isActive) {
-        await switchCamera(facingMode, deviceId);
+        return await switchCamera(facingMode, deviceId);
       } else {
         setSelectedDeviceId(deviceId);
+        return true;
       }
     },
     [facingMode, isActive, switchCamera]

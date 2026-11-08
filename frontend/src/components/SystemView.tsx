@@ -109,7 +109,7 @@ export const SystemView: React.FC<SystemViewProps> = ({ onModelSwitched }) => {
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
             <div className="flex items-center space-x-2 text-slate-400 text-xs font-medium">
               <Zap className="w-4 h-4 text-emerald-400" />
-              <span>Inference Hardware</span>
+              <span>Inference Hardware (Detected)</span>
             </div>
             <div className="text-sm font-semibold text-white font-mono flex items-center space-x-2">
               <span>{systemInfo.device.toUpperCase()}</span>
@@ -120,7 +120,7 @@ export const SystemView: React.FC<SystemViewProps> = ({ onModelSwitched }) => {
               )}
             </div>
             <div className="text-[11px] text-slate-500 font-mono">
-              PyTorch {systemInfo.torch_version}
+              PyTorch {systemInfo.torch_version} &bull; Read-only
             </div>
           </div>
 
@@ -158,7 +158,7 @@ export const SystemView: React.FC<SystemViewProps> = ({ onModelSwitched }) => {
       <div className="space-y-4">
         <h3 className="text-base font-bold text-white flex items-center space-x-2">
           <HardDrive className="w-4 h-4 text-sky-400" />
-          <span>Available YOLO Models</span>
+          <span>Available YOLO Models (Hot-Swappable)</span>
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

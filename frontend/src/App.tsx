@@ -1,20 +1,47 @@
-import React, { useEffect, useState } from 'react';
-import { Navbar } from './components/Navbar';
+import React, { useEffect, useState, useCallback } from 'react';
+import { DesktopSidebar } from './components/Navigation/DesktopSidebar';
+import { MobileNavBar } from './components/Navigation/MobileNavBar';
+import { TopHeader } from './components/Navigation/TopHeader';
 import { LiveCameraView } from './components/LiveCameraView';
 import { ImageAnalysisView } from './components/ImageAnalysisView';
+import { VideoAnalysisView } from './components/VideoAnalysisView';
+import { SessionAnalyticsView } from './components/SessionAnalyticsView';
 import { SystemView } from './components/SystemView';
 import { TokenModal } from './components/TokenModal';
 import { ApiClient } from './api/client';
-import { Github, ExternalLink } from 'lucide-react';
+import { AppViewTab, SessionAnalyticsData } from './types';
+
+const INITIAL_ANALYTICS: SessionAnalyticsData = {
+  totalFrames: 0,
+  totalSent: 0,
+  captureBusyDrops: 0,
+  bufferCongestedDrops: 0,
+  sendFailedDrops: 0,
+  clientDroppedFrames: 0,
+  serverDroppedFrames: 0,
+  processedFrames: 0,
+  displayedFrames: 0,
+  droppedFrames: 0,
+  avgLatencyMs: 0,
+  avgFps: 0,
+  avgServerFps: 0,
+  classDistribution: {},
+  trackedCount: 0,
+  maxConcurrentTracked: 0,
+  startTime: 0,
+};
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'camera' | 'upload' | 'system'>('camera');
+  const [activeTab, setActiveTab] = useState<AppViewTab>('camera');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isTokenModalOpen, setIsTokenModalOpen] = useState<boolean>(false);
   const [isBackendReady, setIsBackendReady] = useState<boolean>(false);
   const [activeModel, setActiveModel] = useState<string>('yolov8n');
   const [hasToken, setHasToken] = useState<boolean>(ApiClient.hasToken());
+  const [isStreaming, setIsStreaming] = useState<boolean>(false);
+  const [sessionAnalytics, setSessionAnalytics] = useState<SessionAnalyticsData>(INITIAL_ANALYTICS);
 
-  const checkBackend = async () => {
+  const checkBackend = useCallback(async () => {
     try {
       await ApiClient.getHealth();
       setIsBackendReady(true);
@@ -23,7 +50,7 @@ export const App: React.FC = () => {
     } catch {
       setIsBackendReady(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     const unsubscribe = ApiClient.onTokenChange((tokenSet) => {
@@ -36,28 +63,84 @@ export const App: React.FC = () => {
     checkBackend();
     const interval = setInterval(checkBackend, 15000);
     return () => clearInterval(interval);
+  }, [checkBackend]);
+
+  const handleTelemetryUpdate = useCallback((data: SessionAnalyticsData) => {
+    setSessionAnalytics(data);
+  }, []);
+
+  const handleResetSession = useCallback(() => {
+    setSessionAnalytics({
+      ...INITIAL_ANALYTICS,
+      startTime: Date.now(),
+    });
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-sky-500 selection:text-white">
-      {/* Top Navigation */}
-      <Navbar
+    <div className="flex h-screen w-screen bg-slate-950 text-slate-100 font-sans overflow-hidden selection:bg-emerald-500 selection:text-white">
+      {/* Desktop Sidebar (Collapsible, hidden on mobile) */}
+      <DesktopSidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenTokenModal={() => setIsTokenModalOpen(true)}
+        isCollapsed={isSidebarCollapsed}
+        setIsCollapsed={setIsSidebarCollapsed}
         isBackendReady={isBackendReady}
         activeModel={activeModel}
         hasToken={hasToken}
+        onOpenTokenModal={() => setIsTokenModalOpen(true)}
+        isStreaming={isStreaming}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-2 sm:px-6 lg:px-8 py-4 sm:py-8">
-        {activeTab === 'camera' && <LiveCameraView />}
-        {activeTab === 'upload' && <ImageAnalysisView />}
-        {activeTab === 'system' && (
-          <SystemView onModelSwitched={(model) => setActiveModel(model)} />
-        )}
-      </main>
+      {/* Main App Container */}
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+        {/* Top Header */}
+        <TopHeader
+          activeTab={activeTab}
+          isBackendReady={isBackendReady}
+          activeModel={activeModel}
+          hasToken={hasToken}
+          onOpenTokenModal={() => setIsTokenModalOpen(true)}
+        />
+
+        {/* Viewport Content Area: Full-bleed for camera on mobile/desktop; padded container for other tabs */}
+        <main
+          className={`flex-1 min-h-0 ${
+            activeTab === 'camera'
+              ? 'p-0 flex flex-col overflow-hidden pb-16 md:pb-0'
+              : 'overflow-y-auto p-3 sm:p-6 pb-20 md:pb-6 max-w-7xl w-full mx-auto'
+          }`}
+        >
+          {activeTab === 'camera' && (
+            <LiveCameraView
+              onTelemetryUpdate={handleTelemetryUpdate}
+              onStreamingStateChange={setIsStreaming}
+            />
+          )}
+
+          {activeTab === 'image' && <ImageAnalysisView />}
+
+          {activeTab === 'video' && <VideoAnalysisView />}
+
+          {activeTab === 'analytics' && (
+            <SessionAnalyticsView
+              analyticsData={sessionAnalytics}
+              onResetSession={handleResetSession}
+              isStreaming={isStreaming}
+            />
+          )}
+
+          {activeTab === 'system' && (
+            <SystemView onModelSwitched={(model) => setActiveModel(model)} />
+          )}
+        </main>
+
+        {/* Mobile Navigation Bar (Fixed bottom, hidden on desktop) */}
+        <MobileNavBar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          isStreaming={isStreaming}
+        />
+      </div>
 
       {/* Access Token Configuration Modal */}
       <TokenModal
@@ -65,39 +148,6 @@ export const App: React.FC = () => {
         onClose={() => setIsTokenModalOpen(false)}
         onSaved={checkBackend}
       />
-
-      {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950/80 py-5 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-          <div className="flex items-center space-x-2">
-            <span className="font-semibold text-slate-400">AI Smart Camera v0.2.2</span>
-            <span>&bull;</span>
-            <span>FastAPI + React + YOLO & Supervision</span>
-          </div>
-
-          <div className="flex items-center space-x-4">
-            <a
-              href="/docs"
-              target="_blank"
-              rel="noreferrer"
-              className="hover:text-sky-400 flex items-center space-x-1 transition"
-            >
-              <span>Swagger API</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-
-            <a
-              href="https://github.com/tahadeab-ai/ai-smart-camera"
-              target="_blank"
-              rel="noreferrer"
-              className="hover:text-white flex items-center space-x-1 transition"
-            >
-              <Github className="w-4 h-4" />
-              <span>GitHub Repository</span>
-            </a>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 };

@@ -1,0 +1,437 @@
+{
+  "hardware_specs": {
+    "os": "Linux-6.6.159+-x86_64-with-glibc2.39",
+    "python": "3.13.18",
+    "pytorch": "2.6.0+cu124",
+    "torchvision": "0.21.0+cu124",
+    "ultralytics": "8.3.253",
+    "cuda_available": false,
+    "cpu_model": "x86_64",
+    "cpu_physical_cores": 1,
+    "cpu_logical_cores": 2,
+    "total_ram_gb": 12.67,
+    "available_ram_gb": 10.35,
+    "settings_device": "cpu",
+    "settings_model_name": "yolov8n",
+    "cuda_device_name": null,
+    "cuda_vram_gb": 0
+  },
+  "test_a_components": {
+    "640x480": {
+      "jpeg_kb": 76.5,
+      "jpeg_decode_ms": {
+        "p50": 2.09,
+        "p95": 2.21,
+        "mean": 2.11
+      },
+      "jpeg_encode_ms": {
+        "p50": 1.49,
+        "p95": 1.6,
+        "mean": 1.5
+      },
+      "model_runs": {
+        "640": {
+          "yolo_inference_ms": {
+            "p50": 174.36,
+            "p95": 271.36,
+            "mean": 195.95
+          },
+          "bytetrack_ms": {
+            "p50": 1.72,
+            "p95": 2.53,
+            "mean": 1.81
+          },
+          "annotation_ms": {
+            "p50": 1.11,
+            "p95": 1.56,
+            "mean": 2.95
+          },
+          "full_server_pipeline_ms": {
+            "p50": 183.49,
+            "p95": 278.23,
+            "mean": 211.03
+          },
+          "max_theoretical_fps": 5.4
+        },
+        "416": {
+          "yolo_inference_ms": {
+            "p50": 77.92,
+            "p95": 88.19,
+            "mean": 79.74
+          },
+          "bytetrack_ms": {
+            "p50": 1.01,
+            "p95": 1.17,
+            "mean": 1.02
+          },
+          "annotation_ms": {
+            "p50": 0.66,
+            "p95": 0.77,
+            "mean": 0.68
+          },
+          "full_server_pipeline_ms": {
+            "p50": 84.06,
+            "p95": 97.85,
+            "mean": 86.29
+          },
+          "max_theoretical_fps": 11.9
+        },
+        "320": {
+          "yolo_inference_ms": {
+            "p50": 53.04,
+            "p95": 59.82,
+            "mean": 54.09
+          },
+          "bytetrack_ms": {
+            "p50": 1.08,
+            "p95": 1.58,
+            "mean": 1.14
+          },
+          "annotation_ms": {
+            "p50": 0.68,
+            "p95": 0.76,
+            "mean": 0.7
+          },
+          "full_server_pipeline_ms": {
+            "p50": 59.76,
+            "p95": 94.31,
+            "mean": 65.89
+          },
+          "max_theoretical_fps": 16.7
+        }
+      }
+    },
+    "480x360": {
+      "jpeg_kb": 51.0,
+      "jpeg_decode_ms": {
+        "p50": 1.88,
+        "p95": 2.02,
+        "mean": 1.9
+      },
+      "jpeg_encode_ms": {
+        "p50": 1.32,
+        "p95": 1.4,
+        "mean": 1.33
+      },
+      "model_runs": {
+        "640": {
+          "yolo_inference_ms": {
+            "p50": 253.9,
+            "p95": 272.22,
+            "mean": 224.08
+          },
+          "bytetrack_ms": {
+            "p50": 1.1,
+            "p95": 1.17,
+            "mean": 1.1
+          },
+          "annotation_ms": {
+            "p50": 0.63,
+            "p95": 0.82,
+            "mean": 0.66
+          },
+          "full_server_pipeline_ms": {
+            "p50": 178.33,
+            "p95": 194.72,
+            "mean": 181.88
+          },
+          "max_theoretical_fps": 5.6
+        },
+        "416": {
+          "yolo_inference_ms": {
+            "p50": 77.5,
+            "p95": 88.38,
+            "mean": 78.77
+          },
+          "bytetrack_ms": {
+            "p50": 1.0,
+            "p95": 1.14,
+            "mean": 1.02
+          },
+          "annotation_ms": {
+            "p50": 0.55,
+            "p95": 0.72,
+            "mean": 0.57
+          },
+          "full_server_pipeline_ms": {
+            "p50": 84.65,
+            "p95": 130.74,
+            "mean": 99.57
+          },
+          "max_theoretical_fps": 11.8
+        },
+        "320": {
+          "yolo_inference_ms": {
+            "p50": 82.18,
+            "p95": 89.21,
+            "mean": 82.46
+          },
+          "bytetrack_ms": {
+            "p50": 1.53,
+            "p95": 1.67,
+            "mean": 1.53
+          },
+          "annotation_ms": {
+            "p50": 0.82,
+            "p95": 0.91,
+            "mean": 0.83
+          },
+          "full_server_pipeline_ms": {
+            "p50": 59.77,
+            "p95": 94.45,
+            "mean": 70.2
+          },
+          "max_theoretical_fps": 16.7
+        }
+      }
+    },
+    "320x240": {
+      "jpeg_kb": 25.0,
+      "jpeg_decode_ms": {
+        "p50": 0.61,
+        "p95": 0.68,
+        "mean": 0.62
+      },
+      "jpeg_encode_ms": {
+        "p50": 0.42,
+        "p95": 0.49,
+        "mean": 0.44
+      },
+      "model_runs": {
+        "640": {
+          "yolo_inference_ms": {
+            "p50": 172.8,
+            "p95": 187.94,
+            "mean": 174.96
+          },
+          "bytetrack_ms": {
+            "p50": 1.13,
+            "p95": 1.26,
+            "mean": 1.15
+          },
+          "annotation_ms": {
+            "p50": 0.54,
+            "p95": 0.64,
+            "mean": 0.56
+          },
+          "full_server_pipeline_ms": {
+            "p50": 176.34,
+            "p95": 190.58,
+            "mean": 177.45
+          },
+          "max_theoretical_fps": 5.7
+        },
+        "416": {
+          "yolo_inference_ms": {
+            "p50": 117.68,
+            "p95": 130.24,
+            "mean": 117.11
+          },
+          "bytetrack_ms": {
+            "p50": 1.57,
+            "p95": 1.81,
+            "mean": 1.58
+          },
+          "annotation_ms": {
+            "p50": 0.79,
+            "p95": 0.97,
+            "mean": 0.88
+          },
+          "full_server_pipeline_ms": {
+            "p50": 84.33,
+            "p95": 131.68,
+            "mean": 100.22
+          },
+          "max_theoretical_fps": 11.9
+        },
+        "320": {
+          "yolo_inference_ms": {
+            "p50": 52.86,
+            "p95": 55.64,
+            "mean": 53.59
+          },
+          "bytetrack_ms": {
+            "p50": 1.11,
+            "p95": 1.24,
+            "mean": 1.11
+          },
+          "annotation_ms": {
+            "p50": 0.55,
+            "p95": 0.62,
+            "mean": 0.55
+          },
+          "full_server_pipeline_ms": {
+            "p50": 56.5,
+            "p95": 62.12,
+            "mean": 57.4
+          },
+          "max_theoretical_fps": 17.7
+        }
+      }
+    }
+  },
+  "test_b_local_streaming": [
+    {
+      "scenario": "Default (640x480, imgsz=416, Tracking ON)",
+      "upload_resolution": "640x480",
+      "model_imgsz": 416,
+      "tracking_enabled": true,
+      "duration_seconds": 10.61,
+      "client_sent_frames": 117,
+      "client_sent_fps": 11.02,
+      "server_processed_frames": 80,
+      "server_returned_jpegs": 80,
+      "effective_throughput_fps": 7.54,
+      "server_latency_p50_ms": 88.3,
+      "server_latency_p95_ms": 137.1,
+      "queue_dwell_p50_ms": 37.8,
+      "e2e_latency_p50_ms": 133.2,
+      "e2e_latency_p95_ms": 200.1,
+      "server_dropped_frames": 37,
+      "server_queue_replacements": 37,
+      "avg_cpu_percent": 66.9
+    },
+    {
+      "scenario": "Optimized Res (480x360, imgsz=416, Tracking ON)",
+      "upload_resolution": "480x360",
+      "model_imgsz": 416,
+      "tracking_enabled": true,
+      "duration_seconds": 10.61,
+      "client_sent_frames": 118,
+      "client_sent_fps": 11.13,
+      "server_processed_frames": 94,
+      "server_returned_jpegs": 94,
+      "effective_throughput_fps": 8.86,
+      "server_latency_p50_ms": 83.5,
+      "server_latency_p95_ms": 99.8,
+      "queue_dwell_p50_ms": 33.7,
+      "e2e_latency_p50_ms": 121.7,
+      "e2e_latency_p95_ms": 153.2,
+      "server_dropped_frames": 24,
+      "server_queue_replacements": 24,
+      "avg_cpu_percent": 53.7
+    },
+    {
+      "scenario": "Lightweight (320x240, imgsz=320, Tracking ON)",
+      "upload_resolution": "320x240",
+      "model_imgsz": 320,
+      "tracking_enabled": true,
+      "duration_seconds": 10.53,
+      "client_sent_frames": 118,
+      "client_sent_fps": 11.21,
+      "server_processed_frames": 115,
+      "server_returned_jpegs": 115,
+      "effective_throughput_fps": 10.92,
+      "server_latency_p50_ms": 56.6,
+      "server_latency_p95_ms": 89.3,
+      "queue_dwell_p50_ms": 0.3,
+      "e2e_latency_p50_ms": 58.1,
+      "e2e_latency_p95_ms": 112.3,
+      "server_dropped_frames": 3,
+      "server_queue_replacements": 3,
+      "avg_cpu_percent": 52.7
+    },
+    {
+      "scenario": "No Tracking (480x360, imgsz=416, Tracking OFF)",
+      "upload_resolution": "480x360",
+      "model_imgsz": 416,
+      "tracking_enabled": false,
+      "duration_seconds": 10.62,
+      "client_sent_frames": 117,
+      "client_sent_fps": 11.02,
+      "server_processed_frames": 78,
+      "server_returned_jpegs": 78,
+      "effective_throughput_fps": 7.35,
+      "server_latency_p50_ms": 84.7,
+      "server_latency_p95_ms": 135.9,
+      "queue_dwell_p50_ms": 34.6,
+      "e2e_latency_p50_ms": 139.7,
+      "e2e_latency_p95_ms": 186.2,
+      "server_dropped_frames": 39,
+      "server_queue_replacements": 39,
+      "avg_cpu_percent": 77.1
+    }
+  ],
+  "test_c_tunnel_streaming": [
+    {
+      "scenario": "Default (640x480, imgsz=416, Tracking ON)",
+      "upload_resolution": "640x480",
+      "model_imgsz": 416,
+      "tracking_enabled": true,
+      "duration_seconds": 13.74,
+      "client_sent_frames": 117,
+      "client_sent_fps": 8.52,
+      "server_processed_frames": 8,
+      "server_returned_jpegs": 7,
+      "effective_throughput_fps": 0.58,
+      "server_latency_p50_ms": 92.7,
+      "server_latency_p95_ms": 111.2,
+      "queue_dwell_p50_ms": 0.4,
+      "e2e_latency_p50_ms": 2311.1,
+      "e2e_latency_p95_ms": 8350.5,
+      "server_dropped_frames": 0,
+      "server_queue_replacements": 0,
+      "avg_cpu_percent": 34.1
+    },
+    {
+      "scenario": "Optimized Res (480x360, imgsz=416, Tracking ON)",
+      "upload_resolution": "480x360",
+      "model_imgsz": 416,
+      "tracking_enabled": true,
+      "duration_seconds": 13.07,
+      "client_sent_frames": 117,
+      "client_sent_fps": 8.95,
+      "server_processed_frames": 1,
+      "server_returned_jpegs": 0,
+      "effective_throughput_fps": 0.08,
+      "server_latency_p50_ms": 103.5,
+      "server_latency_p95_ms": 103.5,
+      "queue_dwell_p50_ms": 0.3,
+      "e2e_latency_p50_ms": 5568.5,
+      "e2e_latency_p95_ms": 5568.5,
+      "server_dropped_frames": 0,
+      "server_queue_replacements": 0,
+      "avg_cpu_percent": 19.4
+    },
+    {
+      "scenario": "Lightweight (320x240, imgsz=320, Tracking ON)",
+      "upload_resolution": "320x240",
+      "model_imgsz": 320,
+      "tracking_enabled": true,
+      "duration_seconds": 12.66,
+      "client_sent_frames": 117,
+      "client_sent_fps": 9.24,
+      "server_processed_frames": 1,
+      "server_returned_jpegs": 0,
+      "effective_throughput_fps": 0.08,
+      "server_latency_p50_ms": 93.1,
+      "server_latency_p95_ms": 93.1,
+      "queue_dwell_p50_ms": 0.7,
+      "e2e_latency_p50_ms": 5156.1,
+      "e2e_latency_p95_ms": 5156.1,
+      "server_dropped_frames": 0,
+      "server_queue_replacements": 0,
+      "avg_cpu_percent": 40.6
+    },
+    {
+      "scenario": "No Tracking (480x360, imgsz=416, Tracking OFF)",
+      "upload_resolution": "480x360",
+      "model_imgsz": 416,
+      "tracking_enabled": false,
+      "duration_seconds": 16.21,
+      "client_sent_frames": 102,
+      "client_sent_fps": 6.29,
+      "server_processed_frames": 2,
+      "server_returned_jpegs": 1,
+      "effective_throughput_fps": 0.12,
+      "server_latency_p50_ms": 84.6,
+      "server_latency_p95_ms": 85.4,
+      "queue_dwell_p50_ms": 0.3,
+      "e2e_latency_p50_ms": 10191.6,
+      "e2e_latency_p95_ms": 13294.0,
+      "server_dropped_frames": 0,
+      "server_queue_replacements": 0,
+      "avg_cpu_percent": 17.7
+    }
+  ]
+}
