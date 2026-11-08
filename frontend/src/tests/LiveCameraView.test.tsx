@@ -53,6 +53,11 @@ describe('LiveCameraView Component', () => {
   });
 
   it('displays switch error banner if camera toggle fails', async () => {
+    Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
+      value: 4,
+      configurable: true,
+      writable: true,
+    });
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
 
     // Mock getUserMedia: first call succeeds (to start camera), second call rejects (to simulate flip failure)
