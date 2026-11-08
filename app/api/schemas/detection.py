@@ -1,6 +1,6 @@
 """Schemas for object detection and WebSocket streaming."""
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class BoundingBox(BaseModel):
@@ -52,6 +52,8 @@ class ImageDetectionResponse(BaseModel):
 class StreamClientConfig(BaseModel):
     """Configuration message sent by WebSocket client."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     type: str = Field(default="config")
     confidence_threshold: float = Field(default=0.25, ge=0.01, le=1.0)
     iou_threshold: float = Field(default=0.45, ge=0.01, le=1.0)
@@ -59,7 +61,11 @@ class StreamClientConfig(BaseModel):
     skip_interval: int = Field(default=1, ge=1, le=10)
     return_annotated_frame: bool = Field(default=True)
     jpeg_quality: int = Field(default=75, ge=10, le=100)
-    enable_tracking: bool = Field(default=True, description="Enable ByteTrack multi-object tracking")
+    enable_tracking: bool = Field(
+        default=True,
+        description="Enable ByteTrack multi-object tracking",
+        validation_alias=AliasChoices("enable_tracking", "tracking_enabled"),
+    )
     enable_trails: bool = Field(default=True, description="Enable motion trail rendering")
     trace_length: int = Field(default=30, ge=1, le=100, description="Maximum trail length in frames")
     target_fps: int = Field(default=15, ge=1, le=60, description="Target streaming frame rate")
