@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Clock, Layers, Zap, Crosshair, ArrowDownCircle } from 'lucide-react';
+import { Activity, Clock, Layers, Zap, Crosshair } from 'lucide-react';
 
 interface MetricsBarProps {
   fps: number;
