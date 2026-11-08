@@ -63,6 +63,7 @@ class StreamClientConfig(BaseModel):
     enable_trails: bool = Field(default=True, description="Enable motion trail rendering")
     trace_length: int = Field(default=30, ge=1, le=100, description="Maximum trail length in frames")
     target_fps: int = Field(default=15, ge=1, le=60, description="Target streaming frame rate")
+    image_size: int = Field(default=416, ge=256, le=1280, description="YOLO model input image size")
 
 
 class StreamMetadata(BaseModel):
@@ -76,3 +77,6 @@ class StreamMetadata(BaseModel):
     stats: DetectionStats
     detections: list[BoundingBox]
     skipped: bool = False
+    dropped_frames: int = 0
+    queue_replacements: int = 0
+    queue_latency_ms: float = 0.0

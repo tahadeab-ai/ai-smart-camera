@@ -58,6 +58,10 @@ class StreamSession:
         }
         self.last_boxes: list[dict[str, Any]] = []
 
+        # Telemetry for backpressure and queue drops
+        self.dropped_frames: int = 0
+        self.queue_replacements: int = 0
+
         # FPS calculation window
         self._timestamps: deque[float] = deque(maxlen=20)
         self._lock = threading.Lock()
@@ -108,6 +112,8 @@ class StreamSession:
                 "tracked_class_counts": {},
             }
             self.last_annotated_jpeg = None
+            self.dropped_frames = 0
+            self.queue_replacements = 0
             logger.info("Session %s tracker and trace history completely reset.", self.session_id)
 
     def update_config(self, **kwargs: Any) -> None:
@@ -151,6 +157,7 @@ class StreamSession:
         camera_service: CameraService,
         frame_bytes: bytes,
         frame_id: int,
+        receive_timestamp: float | None = None,
     ) -> tuple[dict[str, Any], bytes | None]:
         """Processes raw JPEG bytes from the client with decomposed timing metrics.
 
@@ -158,6 +165,11 @@ class StreamSession:
             tuple of (metadata_dict, annotated_jpeg_bytes_or_None).
         """
         frame_start_t = time.perf_counter()
+        queue_latency_ms = (
+            round((frame_start_t - receive_timestamp) * 1000, 2)
+            if receive_timestamp is not None
+            else 0.0
+        )
         self.frame_counter += 1
         self.last_frame_id = frame_id
         current_fps = self.calculate_fps()
@@ -204,6 +216,7 @@ class StreamSession:
                 "frame_id": frame_id,
                 "timestamp": round(time.time(), 3),
                 "latency_ms": total_processing_ms,
+                "queue_latency_ms": queue_latency_ms,
                 "model_inference_ms": 0.0,
                 "annotation_ms": annotation_ms,
                 "frame_processing_ms": total_processing_ms,
@@ -212,17 +225,20 @@ class StreamSession:
                 "detections": self.last_boxes,
                 "frame_skipped": True,
                 "skipped": True,
+                "dropped_frames": self.dropped_frames,
+                "queue_replacements": self.queue_replacements,
             }
             return metadata, annotated_bytes
 
         # Run full inference pipeline
         model_start_t = time.perf_counter()
+        imgsz = getattr(self.config, "image_size", 416)
         with camera_service._lock:
             results, _ = camera_service.inference_engine.predict(
                 image=rgb_frame,
                 confidence_threshold=self.config.confidence_threshold,
                 iou_threshold=self.config.iou_threshold,
-                image_size=640,
+                image_size=imgsz,
             )
 
             raw_detections = camera_service.detector.process_results(
@@ -329,6 +345,7 @@ class StreamSession:
             "frame_id": frame_id,
             "timestamp": round(time.time(), 3),
             "latency_ms": total_processing_ms,
+            "queue_latency_ms": queue_latency_ms,
             "model_inference_ms": model_inference_ms,
             "annotation_ms": annotation_ms,
             "frame_processing_ms": total_processing_ms,
@@ -337,6 +354,8 @@ class StreamSession:
             "detections": boxes,
             "frame_skipped": False,
             "skipped": False,
+            "dropped_frames": self.dropped_frames,
+            "queue_replacements": self.queue_replacements,
         }
 
         return metadata, annotated_bytes

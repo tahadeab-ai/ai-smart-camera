@@ -225,6 +225,11 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     }
   }, []);
 
+  // Inspect client socket outbound buffer for backpressure control
+  const getBufferedAmount = useCallback((): number => {
+    return wsRef.current ? wsRef.current.bufferedAmount : 0;
+  }, []);
+
   useEffect(() => {
     return () => {
       disconnect();
@@ -239,5 +244,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     sendFrame,
     sendConfig,
     sendResetTracker,
+    getBufferedAmount,
   };
 }

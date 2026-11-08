@@ -1,9 +1,19 @@
-"""WebSocket endpoint handling real-time camera streaming with binary JPEG & JSON metadata."""
+"""WebSocket endpoint handling real-time camera streaming with decoupled asynchronous architecture.
 
+Architecture:
+  - 1 WebSocket Reader Task: Reads incoming frames and control messages without blocking.
+  - 1 Bounded Input Queue: Holds latest incoming frame (maxsize=1) with newest-frame replacement.
+  - 1 Inference Worker Task: Dequeues frame, executes model inference and ByteTrack.
+  - 1 Controlled Writer Task: Writes paired JSON telemetry and binary annotated frames.
+"""
+
+import asyncio
 import json
 import logging
 import struct
+import time
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from starlette.concurrency import run_in_threadpool
@@ -49,14 +59,12 @@ async def websocket_camera_stream(
     Protocol:
       1. Origin Check: Validates WebSocket Origin against settings.cors_origins.
       2. Authentication: Strictly requires single-use ?ticket= query param via ticket_manager if access_token is configured.
-         Permanent tokens and query fallbacks are rejected.
       3. Concurrency: Atomically reserves a session slot before accepting handshake.
-      4. Config (Text JSON): {"type": "config", "confidence_threshold": 0.25, ...}
-      5. Frames (Binary): [4-byte uint32 frame_id] + [JPEG bytes] or raw JPEG bytes.
-         Enforces max_ws_frame_size_mb and JPEG magic bytes.
-      6. Responses:
-         - Text JSON metadata: {"type": "detection", "frame_id": ..., "fps": ..., "latency_ms": ...}
-         - Binary annotated JPEG: [4-byte uint32 frame_id] + [JPEG bytes].
+      4. Asynchronous Pipeline:
+         - Reader: Ingests frames and immediately handles control messages (config, reset_tracker).
+         - Bounded Queue: Discards oldest stale frame when worker is busy, preventing buffer accumulation.
+         - Worker: Executes inference and ByteTrack in non-blocking threadpool.
+         - Writer: Dispatches paired JSON metadata and annotated JPEG frames.
     """
     # 1. Validate Origin header
     if not _is_origin_allowed(websocket):
@@ -90,15 +98,21 @@ async def websocket_camera_stream(
 
     session = stream_manager.create_session(session_id=session_id)
     camera_service = get_camera_service()
-    auto_frame_id = 0
 
     logger.info("WebSocket connected. Session: %s", session_id)
 
-    try:
+    # Decoupled Asynchronous Pipeline Queues
+    # Bounded input queue: maxsize=1 ensures only the freshest frame is queued
+    input_queue: asyncio.Queue[tuple[int, bytes, float]] = asyncio.Queue(maxsize=1)
+    # Controlled output queue: paired metadata and frames
+    output_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=4)
+
+    async def _read_loop() -> None:
+        auto_frame_id = 0
         while True:
             message = await websocket.receive()
 
-            # Handle text messages (configuration updates or ping)
+            # Handle text control messages
             if "text" in message:
                 try:
                     payload = json.loads(message["text"])
@@ -136,21 +150,37 @@ async def websocket_camera_stream(
                             target_fps=payload.get(
                                 "target_fps", session.config.target_fps
                             ),
+                            image_size=payload.get(
+                                "image_size", getattr(session.config, "image_size", 416)
+                            ),
                         )
-                        await websocket.send_text(
-                            json.dumps({"type": "config_ack", "status": "ok"})
+                        await output_queue.put(
+                            ("text", json.dumps({"type": "config_ack", "status": "ok"}))
                         )
+
                     elif msg_type == "reset_tracker":
+                        # Deterministic Reset: Drain pending queued frames to prevent stale tracking
+                        while not input_queue.empty():
+                            try:
+                                _ = input_queue.get_nowait()
+                                session.dropped_frames += 1
+                                session.queue_replacements += 1
+                                input_queue.task_done()
+                            except asyncio.QueueEmpty:
+                                break
+
                         session.reset_tracker()
-                        await websocket.send_text(
-                            json.dumps({"type": "reset_tracker_ack", "status": "ok"})
+                        await output_queue.put(
+                            ("text", json.dumps({"type": "reset_tracker_ack", "status": "ok"}))
                         )
+
                     elif msg_type == "ping":
-                        await websocket.send_text(json.dumps({"type": "pong"}))
+                        await output_queue.put(("text", json.dumps({"type": "pong"})))
+
                 except Exception as e:
                     logger.warning("Error parsing text WebSocket message: %s", e)
-                    await websocket.send_text(
-                        json.dumps({"type": "error", "message": f"Malformed message: {e}"})
+                    await output_queue.put(
+                        ("text", json.dumps({"type": "error", "message": f"Malformed message: {e}"}))
                     )
 
             # Handle binary video frame messages
@@ -167,67 +197,123 @@ async def websocket_camera_stream(
                         len(raw_bytes),
                         settings.max_ws_frame_size_mb,
                     )
-                    await websocket.send_text(
-                        json.dumps({
-                            "type": "error",
-                            "message": f"Frame size ({len(raw_bytes)} bytes) exceeds maximum limit of {settings.max_ws_frame_size_mb} MB.",
-                        })
+                    await output_queue.put(
+                        (
+                            "text",
+                            json.dumps({
+                                "type": "error",
+                                "message": f"Frame size ({len(raw_bytes)} bytes) exceeds maximum limit of {settings.max_ws_frame_size_mb} MB.",
+                            }),
+                        )
                     )
                     continue
 
                 # Determine if client included a 4-byte frame_id header
-                # Standard JPEG starts with 0xFF 0xD8
                 if raw_bytes[0] == 0xFF and raw_bytes[1] == 0xD8:
                     auto_frame_id += 1
                     frame_id = auto_frame_id
                     frame_bytes = raw_bytes
                 else:
-                    # Unpack 4-byte big-endian frame_id
                     frame_id = struct.unpack("!I", raw_bytes[:4])[0]
                     frame_bytes = raw_bytes[4:]
 
                 # Validate JPEG signature of payload bytes
                 if len(frame_bytes) < 3 or frame_bytes[0] != 0xFF or frame_bytes[1] != 0xD8:
                     logger.warning("WebSocket frame %d rejected: invalid JPEG magic bytes.", frame_id)
-                    await websocket.send_text(
-                        json.dumps({
-                            "type": "error",
-                            "frame_id": frame_id,
-                            "message": "Malformed binary frame: payload does not contain valid JPEG data.",
-                        })
+                    await output_queue.put(
+                        (
+                            "text",
+                            json.dumps({
+                                "type": "error",
+                                "frame_id": frame_id,
+                                "message": "Malformed binary frame: payload does not contain valid JPEG data.",
+                            }),
+                        )
                     )
                     continue
 
-                try:
-                    # Non-blocking threadpool execution for CPU/GPU-bound frame processing
-                    metadata, annotated_jpeg = await run_in_threadpool(
-                        session.process_frame_bytes,
-                        camera_service,
-                        frame_bytes,
-                        frame_id,
-                    )
+                receive_t = time.perf_counter()
 
-                    # Send JSON telemetry
+                # Bounded Queue Replacement: If worker is busy, discard oldest pending frame
+                if input_queue.full():
+                    try:
+                        _ = input_queue.get_nowait()
+                        session.dropped_frames += 1
+                        session.queue_replacements += 1
+                        input_queue.task_done()
+                    except asyncio.QueueEmpty:
+                        pass
+
+                input_queue.put_nowait((frame_id, frame_bytes, receive_t))
+
+    async def _inference_worker() -> None:
+        while True:
+            frame_id, frame_bytes, receive_t = await input_queue.get()
+            try:
+                # Non-blocking threadpool execution for CPU/GPU-bound frame processing
+                metadata, annotated_jpeg = await run_in_threadpool(
+                    session.process_frame_bytes,
+                    camera_service,
+                    frame_bytes,
+                    frame_id,
+                    receive_t,
+                )
+                await output_queue.put(("frame", (metadata, annotated_jpeg, frame_id)))
+            except Exception as e:
+                logger.error("Error processing frame %s: %s", frame_id, e)
+                err_payload = {
+                    "type": "error",
+                    "frame_id": frame_id,
+                    "message": str(e),
+                }
+                await output_queue.put(("text", json.dumps(err_payload)))
+            finally:
+                input_queue.task_done()
+
+    async def _write_loop() -> None:
+        while True:
+            msg_type, payload = await output_queue.get()
+            try:
+                if msg_type == "text":
+                    await websocket.send_text(payload)
+                elif msg_type == "frame":
+                    metadata, annotated_jpeg, frame_id = payload
+                    # 1. Send JSON telemetry
                     await websocket.send_text(json.dumps(metadata))
-
-                    # Send paired annotated binary frame if enabled
+                    # 2. Send paired annotated binary frame if enabled
                     if annotated_jpeg is not None and session.config.return_annotated_frame:
                         header = struct.pack("!I", frame_id)
                         await websocket.send_bytes(header + annotated_jpeg)
+            except Exception as e:
+                logger.warning("Error writing to WebSocket on session %s: %s", session_id, e)
+                break
+            finally:
+                output_queue.task_done()
 
-                except Exception as e:
-                    logger.error("Error processing frame %s: %s", frame_id, e)
-                    err_payload = {
-                        "type": "error",
-                        "frame_id": frame_id,
-                        "message": str(e),
-                    }
-                    await websocket.send_text(json.dumps(err_payload))
+    # Launch concurrent reader, worker, and writer tasks
+    reader_task = asyncio.create_task(_read_loop(), name=f"ws-reader-{session_id}")
+    worker_task = asyncio.create_task(_inference_worker(), name=f"ws-worker-{session_id}")
+    writer_task = asyncio.create_task(_write_loop(), name=f"ws-writer-{session_id}")
+
+    tasks = [reader_task, worker_task, writer_task]
+
+    try:
+        # Await any task exit (e.g. reader catches disconnect or writer fails)
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            if not task.cancelled() and task.exception():
+                exc = task.exception()
+                if not isinstance(exc, WebSocketDisconnect):
+                    logger.error("Streaming task failed with exception: %s", exc)
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected. Session: %s", session_id)
     except Exception as e:
         logger.error("Unexpected WebSocket error on session %s: %s", session_id, e)
     finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
         session.reset_tracker()
         stream_manager.remove_session(session_id)
+        logger.info("Cleaned up streaming session %s", session_id)
