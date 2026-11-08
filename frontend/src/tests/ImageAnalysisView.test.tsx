@@ -65,7 +65,9 @@ describe('ImageAnalysisView Component', () => {
 
     // Switch to Split View
     fireEvent.click(splitBtn);
-    expect(screen.getByRole('slider', { hidden: true }) || document.querySelector('input[type="range"]')).toBeDefined();
+    const splitSlider = document.querySelector('input.cursor-ew-resize') as HTMLInputElement;
+    expect(splitSlider).toBeDefined();
+    expect(splitSlider.value).toBe('50');
 
     // Click table row to select detection
     const personRow = screen.getByText('person').closest('tr');
