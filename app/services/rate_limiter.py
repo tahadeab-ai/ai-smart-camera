@@ -4,7 +4,6 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
-from typing import Callable
 
 from fastapi import HTTPException, Request, Response, status
 

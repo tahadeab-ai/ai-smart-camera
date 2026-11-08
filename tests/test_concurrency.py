@@ -1,12 +1,10 @@
 """Concurrency and non-blocking event loop tests."""
 
-import io
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image
 
 from app.api.app import app
 from app.api.dependencies import set_camera_service

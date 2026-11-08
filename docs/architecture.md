@@ -1,6 +1,6 @@
-# Architecture Specification: AI Smart Camera v0.2.0
+# Architecture Specification: AI Smart Camera v0.2.1
 
-This document details the software architecture, component boundaries, WebSocket streaming protocol, and security considerations of the **AI Smart Camera v0.2.0** full-stack system.
+This document details the software architecture, component boundaries, WebSocket streaming protocol, and security considerations of the **AI Smart Camera v0.2.1** full-stack system.
 
 ---
 
@@ -8,8 +8,8 @@ This document details the software architecture, component boundaries, WebSocket
 
 The system employs a production-grade three-layer architecture:
 1. **Client Tier**: React 18 + TypeScript SPA using Vite, Tailwind CSS, and HTML5 MediaDevices.
-2. **API & Service Tier**: FastAPI backend running under Uvicorn, serving the REST API (`/api/v1/`), real-time WebSocket stream (`/api/v1/stream`), and compiled static frontend assets from a single origin.
-3. **Computer Vision Core Tier**: PyTorch YOLO models wrapped by Ultralytics and annotated using Roboflow Supervision.
+2. **API & Service Tier**: FastAPI backend running under Uvicorn, serving the REST API (`/api/v1/`), real-time WebSocket stream (`/api/v1/stream`), single-use ticket authentication (`/api/v1/auth/ws-ticket`), and compiled static frontend assets from a single origin.
+3. **Computer Vision Core Tier**: PyTorch YOLO models wrapped by Ultralytics and annotated using Roboflow Supervision, with CPU/GPU-bound tasks offloaded via `run_in_threadpool`.
 
 ```mermaid
 flowchart TD
@@ -23,15 +23,16 @@ flowchart TD
     subgraph Backend["API & Presentation Tier (FastAPI / Uvicorn :7860)"]
         FastAPI["FastAPI Application"]
         SPAMount["StaticFiles Mount & SPA Routing Fallback"]
-        REST["REST API (/api/v1/health, /system, /models, /detect)"]
+        REST["REST API (/api/v1/health, /system, /models, /detect, /auth)"]
         WSRoute["WebSocket Router (/api/v1/stream)"]
-        AuthMiddleware["Access Token Authenticator & Rate Limiter"]
+        RateLimiter["In-Memory Sliding Window Rate Limiter"]
     end
 
     subgraph Service["Application Services Tier"]
-        StreamMgr["StreamManager (Per-Session State & Decimation Cache)"]
+        TicketMgr["TicketManager (Single-Use 30s TTL Tickets)"]
+        StreamMgr["StreamManager (Atomic Slot Reservation & Session State)"]
         CameraSvc["CameraService (Thread-Safe Coordinator)"]
-        Lock["Concurrency Lock (threading.Lock)"]
+        ThreadPool["Threadpool (starlette.concurrency.run_in_threadpool)"]
     end
 
     subgraph CV["Computer Vision Core Tier"]
@@ -56,8 +57,13 @@ flowchart TD
     ReactApp <== "REST (JSON / Multipart)" ==> REST
     ReactApp <== "HTTP (HTML / JS / CSS)" ==> SPAMount
 
+    REST --> RateLimiter
+    REST --> TicketMgr
+    WSRoute --> TicketMgr
     WSRoute --> StreamMgr
-    REST --> CameraSvc
+    REST --> ThreadPool
+    WSRoute --> ThreadPool
+    ThreadPool --> CameraSvc
     StreamMgr --> CameraSvc
     CameraSvc --> Lock
 

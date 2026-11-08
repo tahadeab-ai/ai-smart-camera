@@ -186,9 +186,9 @@ Generated: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}
 {chr(10).join(rows)}
 
 ## Analysis & Recommendations
-1. **CPU Execution**: On standard cloud vCPU environments, YOLOv8n achieves ~20–35 FPS with low variance, making it suitable for edge and remote web streaming.
-2. **GPU Execution**: When a CUDA accelerator (e.g. Nvidia T4/A100) is connected, latency drops below 10ms, allowing 60+ FPS concurrent processing.
-3. **Decimation Policy**: Using a frame decimation interval of 2x or 3x on mobile connections significantly conserves client-server bandwidth while maintaining persistent bounding boxes.
+1. **CPU Execution**: On standard cloud vCPU environments without GPU acceleration, YOLOv8n achieves ~5–15 FPS depending on input image dimensions and vCPU allocation (e.g. 4.9 FPS measured at 810x1080 on Google Colab standard vCPU).
+2. **GPU Execution**: When a CUDA accelerator (e.g. Nvidia T4/A100) is connected, latency drops significantly (often <15ms), achieving 60+ FPS concurrent processing.
+3. **Decimation Policy**: Using a frame decimation interval of 2x or 3x on mobile connections significantly conserves client-server bandwidth and CPU load while maintaining persistent bounding boxes.
 """
 
     with open(output_file, "w", encoding="utf-8") as f:

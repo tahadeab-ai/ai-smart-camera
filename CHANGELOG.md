@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] - 2026-11-08
+
+### Added
+- **Single-Use WebSocket Tickets**:
+  - Implemented `TicketManager` (`app/services/ticket_manager.py`) generating cryptographically secure 32-byte tokens (`secrets.token_urlsafe(32)`) with 30s TTL.
+  - New secured endpoint `POST /api/v1/auth/ws-ticket` to issue ephemeral tickets for WebSocket streaming.
+  - Handshake verification in `app/api/websockets/camera_stream.py`: single-use consumption and instant revocation upon connection.
+- **WebSocket Origin Validation**:
+  - Enforced Origin header validation against `settings.cors_origins` to prevent Cross-Site WebSocket Hijacking.
+- **In-Memory Rate Limiting**:
+  - Implemented sliding window rate limiter (`app/services/rate_limiter.py`) protecting `/api/v1/detect/image` (10 req/min) and `/api/v1/auth/ws-ticket` (10 req/min).
+  - Returns standardized HTTP 429 response envelope with `Retry-After` header.
+- **Detailed Telemetry Breakdown**:
+  - Added decomposed timing metrics in WebSocket detection frames: `model_inference_ms`, `annotation_ms`, `frame_processing_ms`, and `frame_skipped`.
+- **Frontend Automated Tests & Vitest Integration**:
+  - Added Vitest suite with JSDOM environment in `frontend/src/tests/` covering `ApiClient`, `useCamera`, and `useWebSocket`.
+- **Engineering Documentation**:
+  - `docs/audit_v0.2.1.md`: Full architectural vulnerability audit and remediation roadmap.
+  - `docs/security.md`: Comprehensive threat modeling and defense-in-depth documentation.
+  - `docs/reproducibility.md`: Multi-environment dependency pinning and reproduction guide.
+  - `docs/benchmark_methodology.md`: Rigorous latency evaluation protocol and genuine Colab CPU benchmarks.
+
+### Changed
+- **Non-Blocking Vision Execution**:
+  - Offloaded CPU/GPU-bound image decoding, YOLO inference, and OpenCV encoding to threadpool via `run_in_threadpool`, preventing asyncio event loop starvation.
+- **Frontend Camera Lifecycle**:
+  - Hardened `useCamera.ts` with clean synchronous media track teardown, device ID clearing during camera flips, and overconstrained error fallbacks.
+- **Frontend WebSocket Reconnection & Memory Safety**:
+  - Exponential backoff with jitter (1s to 30s, max 5 attempts) and fresh single-use ticket acquisition per reconnect.
+  - Immediate Object URL revocation (`URL.revokeObjectURL`) on every incoming binary frame to prevent browser heap growth.
+- **Dependency Locking**:
+  - Bounded version ranges in `requirements.txt` and `requirements-dev.txt`.
+  - Added committed `frontend/package-lock.json` and converted CI/Docker pipelines to `npm ci`.
+- **Docker Verification**:
+  - Expanded container runtime smoke tests in `.github/workflows/docker-build.yml` with ticket issuance, health checks, models endpoint, and frontend verification.
+
+### Fixed
+- **Unbounded Memory Upload Vulnerability (SEC-01)**:
+  - Added upfront `Content-Length` header check and 64KB bounded chunk streaming up to 20MB in `app/api/routes/detection.py`.
+- **Decompression Bomb Protection**:
+  - Added magic byte validation (JPEG, PNG, WebP) and strict dimension bounds (`10x10` to `4096x4096`).
+- **TOCTOU Concurrency Race Condition (PERF-02)**:
+  - Replaced unprotected active stream count with thread-safe atomic slot reservation in `StreamManager`.
+
+---
+
 ## [0.2.0] - 2026-11-07
 
 ### Added
