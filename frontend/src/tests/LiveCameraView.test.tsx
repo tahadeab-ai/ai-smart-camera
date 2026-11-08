@@ -34,7 +34,7 @@ describe('LiveCameraView Component', () => {
   it('aborts WebSocket connection if camera initialization fails', async () => {
     // Mock navigator.mediaDevices.getUserMedia rejection
     const mockGetUserMedia = vi.fn().mockRejectedValue(new DOMException('Permission denied', 'NotAllowedError'));
-    Object.defineProperty(global.navigator, 'mediaDevices', {
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
       value: {
         getUserMedia: mockGetUserMedia,
         enumerateDevices: vi.fn().mockResolvedValue([]),

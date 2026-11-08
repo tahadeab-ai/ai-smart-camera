@@ -156,6 +156,8 @@ describe('useWebSocket', () => {
     expect(ws.send).toHaveBeenCalledTimes(2);
     const msg1 = JSON.parse(ws.send.mock.calls[0][0]);
     const msg2 = JSON.parse(ws.send.mock.calls[1][0]);
+    expect(msg1.request_id).toBeDefined();
+    expect(msg2.request_id).toBeDefined();
     expect(msg1.request_id).not.toBe(msg2.request_id);
 
     let p1Resolved = false;
@@ -224,6 +226,8 @@ describe('useWebSocket', () => {
 
     const msg1 = JSON.parse(ws.send.mock.calls[0][0]);
     const msg2 = JSON.parse(ws.send.mock.calls[1][0]);
+    expect(msg1.request_id).toBeDefined();
+    expect(msg2.request_id).toBeDefined();
 
     // Advance by 400ms -> p1 times out, p2 remains pending
     await act(async () => {
