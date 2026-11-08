@@ -2,7 +2,7 @@ name: Docker - Build & Runtime Verification
 
 on:
   push:
-    branches: [main]
+    branches: [main, "hardening/**"]
   pull_request:
     branches: [main]
 
@@ -20,7 +20,7 @@ jobs:
 
       - name: Build Multi-Stage Docker Image
         run: |
-          docker build -t ai-smart-camera:0.2.0 .
+          docker build -t ai-smart-camera:0.2.1 .
 
       - name: Start Container in Background
         run: |
@@ -32,7 +32,7 @@ jobs:
             -e MODEL_NAME=yolov8n \
             -e DEVICE=cpu \
             -e LOG_LEVEL=DEBUG \
-            ai-smart-camera:0.2.0
+            ai-smart-camera:0.2.1
 
       - name: Await Service Readiness
         run: |
@@ -61,6 +61,15 @@ jobs:
       - name: Test Readiness Probe (/api/v1/health/ready)
         run: |
           curl -s -f -v http://localhost:7860/api/v1/health/ready
+
+      - name: Test Models Endpoint (/api/v1/models)
+        run: |
+          curl -s -f -v http://localhost:7860/api/v1/models
+
+      - name: Test WebSocket Ticket Issuance (/api/v1/auth/ws-ticket)
+        run: |
+          TICKET_RESP=$(curl -s -f -X POST http://localhost:7860/api/v1/auth/ws-ticket)
+          echo "$TICKET_RESP" | grep -q "ticket" && echo "WS ticket issued successfully."
 
       - name: Test OpenAPI Swagger Documentation (/docs)
         run: |

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiClient } from '../api/client';
 import { StreamConfig, StreamMetadata } from '../types';
 
 export interface UseWebSocketOptions {
@@ -7,29 +8,66 @@ export interface UseWebSocketOptions {
   config?: StreamConfig;
 }
 
+const INITIAL_RECONNECT_DELAY_MS = 1000;
+const MAX_RECONNECT_DELAY_MS = 30000;
+const RECONNECT_FACTOR = 1.5;
+const MAX_RECONNECT_ATTEMPTS = 5;
+
 export function useWebSocket(options: UseWebSocketOptions = {}) {
   const { onMetadata, onAnnotatedFrame, config } = options;
 
   const wsRef = useRef<WebSocket | null>(null);
   const frameIdRef = useRef<number>(0);
   const lastObjectUrlRef = useRef<string | null>(null);
+  const isManualDisconnectRef = useRef<boolean>(false);
+  const reconnectAttemptsRef = useRef<number>(0);
+  const reconnectTimeoutRef = useRef<number | null>(null);
 
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Connect to WebSocket endpoint
-  const connect = useCallback(() => {
+  // Clean up object URLs to prevent memory leaks
+  const cleanupLastObjectUrl = useCallback(() => {
+    if (lastObjectUrlRef.current) {
+      URL.revokeObjectURL(lastObjectUrlRef.current);
+      lastObjectUrlRef.current = null;
+    }
+  }, []);
+
+  // Internal connection executor
+  const executeConnect = useCallback(async () => {
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
     setError(null);
-    const token = localStorage.getItem('ai_cam_token');
+
+    // Acquire single-use ticket if possible
+    let ticket: string | null = null;
+    try {
+      const ticketRes = await ApiClient.getWsTicket();
+      ticket = ticketRes.ticket;
+    } catch (err: unknown) {
+      // If server does not require tickets or auth failed
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('401') || msg.includes('Unauthorized')) {
+        setError('Authentication required: invalid or missing token.');
+        return;
+      }
+      // If endpoint not requiring auth or server doesn't use tickets
+      logger: console.debug('Proceeding without ticket:', msg);
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const url = new URL(`${protocol}//${host}/api/v1/stream`);
-    if (token) {
-      url.searchParams.set('token', token);
+    if (ticket) {
+      url.searchParams.set('ticket', ticket);
+    } else {
+      const token = ApiClient.getToken();
+      if (token) {
+        url.searchParams.set('token', token);
+      }
     }
 
     try {
@@ -40,7 +78,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       ws.onopen = () => {
         setIsConnected(true);
         setError(null);
-        // Send initial configuration
+        reconnectAttemptsRef.current = 0; // Reset backoff counter on success
+
         if (config) {
           ws.send(JSON.stringify({ type: 'config', ...config }));
         }
@@ -64,10 +103,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
             const jpegBlob = new Blob([event.data.slice(4)], { type: 'image/jpeg' });
             const url = URL.createObjectURL(jpegBlob);
 
-            // Clean up previous URL to prevent memory leaks
-            if (lastObjectUrlRef.current) {
-              URL.revokeObjectURL(lastObjectUrlRef.current);
-            }
+            // Clean up previous Object URL immediately to prevent heap growth
+            cleanupLastObjectUrl();
             lastObjectUrlRef.current = url;
             onAnnotatedFrame(url, frameId);
           }
@@ -76,10 +113,34 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
       ws.onclose = (event) => {
         setIsConnected(false);
+        cleanupLastObjectUrl();
+
         if (event.code === 1008) {
-          setError('Authentication failed: Invalid access token.');
-        } else if (event.code === 1013) {
+          setError('Authentication failed: Invalid access token or ticket.');
+          return; // Do not auto-reconnect on auth failure
+        }
+        if (event.code === 1013) {
           setError('Max concurrent streams reached on server.');
+        }
+
+        // Schedule auto-reconnect if closure was unexpected
+        if (!isManualDisconnectRef.current && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+          const attempt = reconnectAttemptsRef.current;
+          const delay = Math.min(
+            MAX_RECONNECT_DELAY_MS,
+            INITIAL_RECONNECT_DELAY_MS * Math.pow(RECONNECT_FACTOR, attempt)
+          );
+          const jitter = Math.random() * 500;
+          const totalDelay = Math.round(delay + jitter);
+
+          console.warn(`WebSocket disconnected. Reconnecting in ${totalDelay}ms (attempt ${attempt + 1}/${MAX_RECONNECT_ATTEMPTS})...`);
+          reconnectAttemptsRef.current += 1;
+
+          reconnectTimeoutRef.current = window.setTimeout(() => {
+            executeConnect();
+          }, totalDelay);
+        } else if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+          setError('WebSocket disconnected: Maximum reconnect attempts exceeded.');
         }
       };
 
@@ -89,20 +150,33 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     } catch (err: unknown) {
       setError(`WebSocket initialization error: ${err}`);
     }
-  }, [config, onAnnotatedFrame, onMetadata]);
+  }, [cleanupLastObjectUrl, config, onAnnotatedFrame, onMetadata]);
 
-  // Disconnect WebSocket
+  // Connect initiating user action
+  const connect = useCallback(() => {
+    isManualDisconnectRef.current = false;
+    reconnectAttemptsRef.current = 0;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    executeConnect();
+  }, [executeConnect]);
+
+  // Disconnect WebSocket and cancel pending reconnects
   const disconnect = useCallback(() => {
+    isManualDisconnectRef.current = true;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
-    if (lastObjectUrlRef.current) {
-      URL.revokeObjectURL(lastObjectUrlRef.current);
-      lastObjectUrlRef.current = null;
-    }
+    cleanupLastObjectUrl();
     setIsConnected(false);
-  }, []);
+  }, [cleanupLastObjectUrl]);
 
   // Send binary frame with frame_id and backpressure prevention
   const sendFrame = useCallback((jpegBytes: Uint8Array): boolean => {
@@ -111,18 +185,17 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       return false;
     }
 
-    // Backpressure check: Drop frame if buffer is congested
+    // Backpressure check: Drop frame if client buffer is congested
     if (ws.bufferedAmount > 256 * 1024) {
-      return false; // Skip frame to prioritize latest-frame processing
+      return false;
     }
 
     frameIdRef.current += 1;
     const frameId = frameIdRef.current;
 
-    // Allocate buffer: 4-byte header + JPEG bytes
     const buffer = new Uint8Array(4 + jpegBytes.byteLength);
     const view = new DataView(buffer.buffer);
-    view.setUint32(0, frameId, false); // Big-endian
+    view.setUint32(0, frameId, false);
     buffer.set(jpegBytes, 4);
 
     ws.send(buffer);

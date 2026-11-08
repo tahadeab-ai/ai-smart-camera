@@ -6,39 +6,74 @@ import struct
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import get_camera_service
 from app.config import settings
 from app.services.stream_manager import stream_manager
+from app.services.ticket_manager import ticket_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Stream"])
+
+
+def _is_origin_allowed(websocket: WebSocket) -> bool:
+    """Verifies WebSocket handshake Origin header against configured CORS origins."""
+    if "*" in settings.cors_origins:
+        return True
+
+    origin = websocket.headers.get("origin")
+    if not origin:
+        # Direct non-browser clients (or same-origin where Origin header is omitted)
+        return True
+
+    # Check origin or stripped protocol
+    cleaned_origins = {o.rstrip("/") for o in settings.cors_origins}
+    return origin.rstrip("/") in cleaned_origins
 
 
 @router.websocket("/stream")
 async def websocket_camera_stream(
     websocket: WebSocket,
 ) -> None:
-    """Real-time bi-directional camera streaming endpoint.
+    """Real-time bi-directional camera streaming endpoint with ticket authentication and origin validation.
 
     Protocol:
-      1. Authentication: optional query parameter '?token=...' or header 'X-Access-Token'.
-      2. Config (Text JSON): {"type": "config", "confidence_threshold": 0.25, ...}
-      3. Frames (Binary): JPEG bytes or [4-byte uint32 frame_id] + [JPEG bytes].
-      4. Responses:
-         - Text JSON metadata: {"type": "detection", "frame_id": ..., "fps": ..., ...}
-         - Binary annotated JPEG: [4-byte uint32 frame_id] + [JPEG bytes] (if return_annotated_frame=True).
+      1. Origin Check: Validates WebSocket Origin against settings.cors_origins.
+      2. Authentication: Validates single-use ?ticket= query param via ticket_manager if access_token is configured.
+      3. Concurrency: Atomically reserves a session slot before accepting handshake.
+      4. Config (Text JSON): {"type": "config", "confidence_threshold": 0.25, ...}
+      5. Frames (Binary): [4-byte uint32 frame_id] + [JPEG bytes] or raw JPEG bytes.
+      6. Responses:
+         - Text JSON metadata: {"type": "detection", "frame_id": ..., "fps": ..., "latency_ms": ...}
+         - Binary annotated JPEG: [4-byte uint32 frame_id] + [JPEG bytes].
     """
-    # 1. Token validation if configured
-    if settings.access_token:
-        token = websocket.query_params.get("token") or websocket.headers.get("x-access-token")
-        if token != settings.access_token:
-            logger.warning("WebSocket handshake rejected: invalid access token.")
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
+    # 1. Validate Origin header
+    if not _is_origin_allowed(websocket):
+        logger.warning(
+            "WebSocket rejected: Origin '%s' not permitted in cors_origins.",
+            websocket.headers.get("origin"),
+        )
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
 
-    # 2. Concurrency limit check
-    if stream_manager.active_count >= settings.max_concurrent_streams:
+    # 2. Validate single-use ticket if access token is required
+    if settings.access_token:
+        ticket = websocket.query_params.get("ticket")
+        # Backwards compatibility check for query token (deprecated) or ticket
+        is_valid = ticket_manager.consume_ticket(ticket or "")
+        if not is_valid:
+            # Fallback check if user passed master token directly in development/test
+            master_token = websocket.query_params.get("token") or websocket.headers.get("x-access-token")
+            if master_token != settings.access_token:
+                logger.warning("WebSocket rejected: invalid or missing single-use ticket.")
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+
+    session_id = str(uuid.uuid4())
+
+    # 3. Atomic concurrency slot reservation
+    if not stream_manager.reserve_slot(session_id):
         logger.warning(
             "WebSocket rejected: max concurrent streams (%d) reached.",
             settings.max_concurrent_streams,
@@ -48,7 +83,6 @@ async def websocket_camera_stream(
 
     await websocket.accept()
 
-    session_id = str(uuid.uuid4())
     session = stream_manager.create_session(session_id=session_id)
     camera_service = get_camera_service()
     auto_frame_id = 0
@@ -115,10 +149,12 @@ async def websocket_camera_stream(
                     frame_bytes = raw_bytes[4:]
 
                 try:
-                    metadata, annotated_jpeg = session.process_frame_bytes(
-                        camera_service=camera_service,
-                        frame_bytes=frame_bytes,
-                        frame_id=frame_id,
+                    # Non-blocking threadpool execution for CPU/GPU-bound frame processing
+                    metadata, annotated_jpeg = await run_in_threadpool(
+                        session.process_frame_bytes,
+                        camera_service,
+                        frame_bytes,
+                        frame_id,
                     )
 
                     # Send JSON telemetry

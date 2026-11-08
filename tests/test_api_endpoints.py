@@ -12,6 +12,16 @@ from app.api.app import app
 from app.api.dependencies import set_camera_service
 from app.config import settings
 from app.services.camera_service import CameraService
+from app.services.rate_limiter import image_rate_limiter, ticket_rate_limiter
+from app.services.ticket_manager import ticket_manager
+
+
+@pytest.fixture(autouse=True)
+def reset_limiters():
+    """Resets in-memory rate limiters and tickets before each test."""
+    image_rate_limiter.reset()
+    ticket_rate_limiter.reset()
+    ticket_manager.clear()
 
 
 @pytest.fixture
@@ -66,12 +76,12 @@ def client(mock_service):
 
 
 def test_health_live(client):
-    """GET /api/v1/health/live returns 200 and version 0.2.0."""
+    """GET /api/v1/health/live returns 200 and version 0.2.1."""
     response = client.get("/api/v1/health/live")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["version"] == "0.2.0"
+    assert data["version"] == "0.2.1"
     assert "timestamp" in data
 
 
@@ -117,7 +127,6 @@ def test_switch_model_endpoint(client, mock_service):
 
 def test_detect_image_endpoint(client, mock_service):
     """POST /api/v1/detect/image processes uploaded image and returns schema."""
-    # Create in-memory JPEG image
     img = Image.new("RGB", (320, 240), color="blue")
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
@@ -139,28 +148,84 @@ def test_detect_image_endpoint(client, mock_service):
     assert data["latency_ms"] == 15.4
 
 
-def test_detect_image_invalid_file(client, mock_service):
-    """POST /api/v1/detect/image with corrupt image returns 400."""
+def test_detect_image_invalid_magic_bytes(client, mock_service):
+    """POST /api/v1/detect/image with corrupt image header returns 400 INVALID_IMAGE_FORMAT."""
     response = client.post(
         "/api/v1/detect/image",
-        files={"file": ("corrupt.txt", b"not an image", "text/plain")},
+        files={"file": ("corrupt.txt", b"not an image with valid magic bytes", "text/plain")},
     )
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == "INVALID_IMAGE"
+    assert response.json()["error"]["code"] == "INVALID_IMAGE_FORMAT"
 
 
-def test_access_token_security(client, mock_service, monkeypatch):
-    """Verifies that when access_token is set, unauthorized requests receive 401."""
-    monkeypatch.setattr(settings, "access_token", "secret-test-token")
+def test_detect_image_dimensions_too_small(client, mock_service):
+    """POST /api/v1/detect/image with dimensions < 10x10 returns 400 INVALID_IMAGE_DIMENSIONS."""
+    img = Image.new("RGB", (8, 8), color="red")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    buf.seek(0)
+
+    response = client.post(
+        "/api/v1/detect/image",
+        files={"file": ("tiny.jpg", buf, "image/jpeg")},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_IMAGE_DIMENSIONS"
+
+
+def test_detect_image_payload_too_large(client, mock_service, monkeypatch):
+    """POST /api/v1/detect/image exceeding size limit returns 413."""
+    # Temporarily set max upload to 1MB
+    monkeypatch.setattr(settings, "max_upload_size_mb", 1)
+    large_payload = b"\xff\xd8\xff" + b"0" * (1024 * 1024 + 10)
+
+    response = client.post(
+        "/api/v1/detect/image",
+        files={"file": ("oversized.jpg", large_payload, "image/jpeg")},
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "PAYLOAD_TOO_LARGE"
+
+
+def test_rate_limiting_detect_image(client, mock_service):
+    """POST /api/v1/detect/image enforces 10 req/min sliding window rate limit."""
+    img = Image.new("RGB", (100, 100), color="green")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    img_bytes = buf.getvalue()
+
+    for i in range(10):
+        res = client.post(
+            "/api/v1/detect/image",
+            files={"file": (f"test_{i}.jpg", io.BytesIO(img_bytes), "image/jpeg")},
+        )
+        assert res.status_code == 200
+
+    # 11th request must be rejected with 429
+    res_11 = client.post(
+        "/api/v1/detect/image",
+        files={"file": ("test_11.jpg", io.BytesIO(img_bytes), "image/jpeg")},
+    )
+    assert res_11.status_code == 429
+    assert res_11.json()["error"]["code"] == "RATE_LIMIT_EXCEEDED"
+    assert "Retry-After" in res_11.headers
+
+
+def test_ws_ticket_issuance(client, mock_service, monkeypatch):
+    """POST /api/v1/auth/ws-ticket issues single-use token when authenticated."""
+    monkeypatch.setattr(settings, "access_token", "test-token-123")
 
     # Unauthorized request
-    res = client.get("/api/v1/system/info")
-    assert res.status_code == 401
-    assert res.json()["error"]["code"] == "UNAUTHORIZED"
+    res_unauth = client.post("/api/v1/auth/ws-ticket")
+    assert res_unauth.status_code == 401
 
-    # Authorized request via header
-    res_auth = client.get(
-        "/api/v1/system/info",
-        headers={"X-Access-Token": "secret-test-token"},
+    # Authorized request
+    res_auth = client.post(
+        "/api/v1/auth/ws-ticket",
+        headers={"X-Access-Token": "test-token-123"},
     )
     assert res_auth.status_code == 200
+    data = res_auth.json()
+    assert "ticket" in data
+    assert len(data["ticket"]) >= 32
+    assert data["expires_in"] == 30

@@ -1,5 +1,5 @@
 # ==============================================================================
-# Multi-stage Dockerfile for AI Smart Camera v0.2.0
+# Multi-stage Dockerfile for AI Smart Camera v0.2.1
 # Stage 1: Build React 18 + TypeScript + Vite SPA
 # Stage 2: Production Python 3.11-slim FastAPI + Computer Vision Runtime
 # ==============================================================================
@@ -11,8 +11,8 @@ FROM node:20-slim AS frontend-builder
 
 WORKDIR /build
 
-COPY frontend/package.json ./
-RUN npm install
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY frontend/ ./
 RUN npm run build
