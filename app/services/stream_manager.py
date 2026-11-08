@@ -30,6 +30,7 @@ class StreamConfig:
     enable_trails: bool = True
     trace_length: int = 30
     target_fps: int = 15
+    image_size: int = 416
 
 
 class StreamSession:
