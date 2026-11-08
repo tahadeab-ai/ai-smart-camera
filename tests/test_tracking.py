@@ -14,8 +14,22 @@ from PIL import Image
 from app.api.app import app
 from app.api.dependencies import set_camera_service
 from app.services.camera_service import CameraService
-from app.services.stream_manager import StreamConfig, StreamSession
+from app.services.stream_manager import StreamConfig, StreamSession, stream_manager
 from app.services.ticket_manager import ticket_manager
+
+
+@pytest.fixture(autouse=True)
+def reset_tracking_state():
+    """Resets stream sessions and tickets before and after each test."""
+    ticket_manager.clear()
+    with stream_manager._lock:
+        stream_manager._sessions.clear()
+        stream_manager._reserved_slots.clear()
+    yield
+    ticket_manager.clear()
+    with stream_manager._lock:
+        stream_manager._sessions.clear()
+        stream_manager._reserved_slots.clear()
 
 
 def _create_jpeg_bytes(width: int = 640, height: int = 480) -> bytes:
@@ -90,6 +104,7 @@ def client(mock_tracking_service):
     set_camera_service(mock_tracking_service)
     with patch("app.api.app.CameraService", return_value=mock_tracking_service):
         yield TestClient(app)
+    set_camera_service(None)
 
 
 def test_session_tracking_isolation():
