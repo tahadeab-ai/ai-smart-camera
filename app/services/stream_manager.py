@@ -58,9 +58,14 @@ class StreamSession:
         }
         self.last_boxes: list[dict[str, Any]] = []
 
+        # Telemetry for backpressure and queue drops
+        self.dropped_frames: int = 0
+        self.queue_replacements: int = 0
+
         # FPS calculation window
         self._timestamps: deque[float] = deque(maxlen=20)
         self._lock = threading.Lock()
+        self.reset_epoch: int = 0
 
     def _init_tracker(self) -> None:
         """Initializes an isolated ByteTrack and TraceAnnotator instance for this session.
@@ -87,12 +92,14 @@ class StreamSession:
             color_lookup=sv.ColorLookup.TRACK,
         )
 
-    def reset_tracker(self) -> None:
+    def reset_tracker(self) -> int:
         """Completely resets tracking state, motion trails, and cached frame detections.
 
+        Increments reset_epoch under lock to invalidate any in-flight inference threads.
         Used on stream initialization, camera switching, or explicit client reset.
         """
         with self._lock:
+            self.reset_epoch += 1
             if self.tracker is not None:
                 try:
                     self.tracker.reset()
@@ -108,11 +115,20 @@ class StreamSession:
                 "tracked_class_counts": {},
             }
             self.last_annotated_jpeg = None
-            logger.info("Session %s tracker and trace history completely reset.", self.session_id)
+            self.dropped_frames = 0
+            self.queue_replacements = 0
+            logger.info("Session %s tracker reset (epoch: %d).", self.session_id, self.reset_epoch)
+            return self.reset_epoch
 
     def update_config(self, **kwargs: Any) -> None:
         """Dynamically updates stream settings (e.g. threshold, skip interval, tracking)."""
         with self._lock:
+            # Handle alias tracking_enabled <-> enable_tracking
+            if "tracking_enabled" in kwargs and "enable_tracking" not in kwargs:
+                kwargs["enable_tracking"] = kwargs.pop("tracking_enabled")
+            if "skip_interval" in kwargs and kwargs["skip_interval"] is not None:
+                kwargs["skip_interval"] = max(1, int(kwargs["skip_interval"]))
+
             reinit_tracker = False
             for k, v in kwargs.items():
                 if hasattr(self.config, k):
@@ -151,13 +167,32 @@ class StreamSession:
         camera_service: CameraService,
         frame_bytes: bytes,
         frame_id: int,
-    ) -> tuple[dict[str, Any], bytes | None]:
+        receive_timestamp: float | None = None,
+        expected_epoch: int | None = None,
+    ) -> tuple[dict[str, Any] | None, bytes | None]:
         """Processes raw JPEG bytes from the client with decomposed timing metrics.
 
+        Args:
+            camera_service: Global CameraService singleton.
+            frame_bytes: Raw JPEG bytes.
+            frame_id: Monotonic integer frame identifier.
+            receive_timestamp: Monotonic reception timestamp for queue dwell calculation.
+            expected_epoch: Reset epoch when frame was enqueued. If epoch advanced during
+                inference, the frame is stale and discarded (returns None, None).
+
         Returns:
-            tuple of (metadata_dict, annotated_jpeg_bytes_or_None).
+            tuple of (metadata_dict_or_None, annotated_jpeg_bytes_or_None).
         """
+        # Discard stale frame immediately if reset occurred before execution started
+        if expected_epoch is not None and self.reset_epoch != expected_epoch:
+            return None, None
+
         frame_start_t = time.perf_counter()
+        queue_latency_ms = (
+            round((frame_start_t - receive_timestamp) * 1000, 2)
+            if receive_timestamp is not None
+            else 0.0
+        )
         self.frame_counter += 1
         self.last_frame_id = frame_id
         current_fps = self.calculate_fps()
@@ -175,54 +210,62 @@ class StreamSession:
         is_skipped = skip > 1 and self.frame_counter > 1 and ((self.frame_counter - 1) % skip != 0)
 
         if is_skipped:
-            # Re-annotate incoming frame using cached detections in <1ms
-            ann_start_t = time.perf_counter()
-            annotated_bytes = None
+            with self._lock:
+                if expected_epoch is not None and self.reset_epoch != expected_epoch:
+                    return None, None
 
-            if self.last_detections is not None and self.config.return_annotated_frame:
-                annotated_rgb = camera_service.annotator.annotate(
-                    scene=rgb_frame,
-                    detections=self.last_detections,
-                    class_names=camera_service.detector.class_names,
-                    show_confidence=True,
-                )
-                annotated_bgr = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
-                success, encoded = cv2.imencode(
-                    ".jpg",
-                    annotated_bgr,
-                    [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality],
-                )
-                annotated_bytes = encoded.tobytes() if success else None
-            else:
-                annotated_bytes = self.last_annotated_jpeg
+                # Re-annotate incoming frame using cached detections in <1ms
+                ann_start_t = time.perf_counter()
+                annotated_bytes = None
 
-            annotation_ms = round((time.perf_counter() - ann_start_t) * 1000, 2)
-            total_processing_ms = round((time.perf_counter() - frame_start_t) * 1000, 2)
+                if self.last_detections is not None and self.config.return_annotated_frame:
+                    annotated_rgb = camera_service.annotator.annotate(
+                        scene=rgb_frame,
+                        detections=self.last_detections,
+                        class_names=camera_service.detector.class_names,
+                        show_confidence=True,
+                    )
+                    annotated_bgr = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
+                    success, encoded = cv2.imencode(
+                        ".jpg",
+                        annotated_bgr,
+                        [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality],
+                    )
+                    annotated_bytes = encoded.tobytes() if success else None
+                else:
+                    annotated_bytes = self.last_annotated_jpeg
 
-            metadata = {
-                "type": "detection",
-                "frame_id": frame_id,
-                "timestamp": round(time.time(), 3),
-                "latency_ms": total_processing_ms,
-                "model_inference_ms": 0.0,
-                "annotation_ms": annotation_ms,
-                "frame_processing_ms": total_processing_ms,
-                "fps": current_fps,
-                "stats": self.last_stats,
-                "detections": self.last_boxes,
-                "frame_skipped": True,
-                "skipped": True,
-            }
-            return metadata, annotated_bytes
+                annotation_ms = round((time.perf_counter() - ann_start_t) * 1000, 2)
+                total_processing_ms = round((time.perf_counter() - frame_start_t) * 1000, 2)
+
+                metadata = {
+                    "type": "detection",
+                    "frame_id": frame_id,
+                    "timestamp": round(time.time(), 3),
+                    "latency_ms": total_processing_ms,
+                    "queue_latency_ms": queue_latency_ms,
+                    "model_inference_ms": 0.0,
+                    "annotation_ms": annotation_ms,
+                    "frame_processing_ms": total_processing_ms,
+                    "fps": current_fps,
+                    "stats": self.last_stats,
+                    "detections": self.last_boxes,
+                    "frame_skipped": True,
+                    "skipped": True,
+                    "dropped_frames": self.dropped_frames,
+                    "queue_replacements": self.queue_replacements,
+                }
+                return metadata, annotated_bytes
 
         # Run full inference pipeline
         model_start_t = time.perf_counter()
+        imgsz = getattr(self.config, "image_size", 416)
         with camera_service._lock:
             results, _ = camera_service.inference_engine.predict(
                 image=rgb_frame,
                 confidence_threshold=self.config.confidence_threshold,
                 iou_threshold=self.config.iou_threshold,
-                image_size=640,
+                image_size=imgsz,
             )
 
             raw_detections = camera_service.detector.process_results(
@@ -239,6 +282,11 @@ class StreamSession:
             )
             raw_total_count = raw_stats.get("total_count", 0)
             raw_class_counts = raw_stats.get("class_counts", {})
+
+        # Guard against tracker mutations if a reset arrived while inference was in flight
+        with self._lock:
+            if expected_epoch is not None and self.reset_epoch != expected_epoch:
+                return None, None
 
             # 2. Update with ByteTrack (per-session tracker)
             if self.config.enable_tracking and self.tracker is not None:
@@ -296,31 +344,31 @@ class StreamSession:
             boxes = camera_service._extract_boxes(tracked_detections)
             annotation_ms = round((time.perf_counter() - ann_start_t) * 1000, 2)
 
-        stats = {
-            "total_count": raw_total_count,
-            "class_counts": raw_class_counts,
-            "tracked_count": tracked_count,
-            "tracked_class_counts": tracked_class_counts,
-        }
+            stats = {
+                "total_count": raw_total_count,
+                "class_counts": raw_class_counts,
+                "tracked_count": tracked_count,
+                "tracked_class_counts": tracked_class_counts,
+            }
 
-        # Encode annotated image if requested
-        annotated_bytes = None
-        if self.config.return_annotated_frame:
-            annotated_bgr = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
-            success, encoded = cv2.imencode(
-                ".jpg",
-                annotated_bgr,
-                [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality],
-            )
-            if success:
-                annotated_bytes = encoded.tobytes()
+            # Encode annotated image if requested
+            annotated_bytes = None
+            if self.config.return_annotated_frame:
+                annotated_bgr = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
+                success, encoded = cv2.imencode(
+                    ".jpg",
+                    annotated_bgr,
+                    [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality],
+                )
+                if success:
+                    annotated_bytes = encoded.tobytes()
 
-        # Update cache for smooth frame decimation
-        self.last_detections = tracked_detections
-        self.last_stats = stats
-        self.last_boxes = boxes
-        self.last_annotated_jpeg = annotated_bytes
-        self.last_inference_time = time.time()
+            # Update cache for smooth frame decimation
+            self.last_detections = tracked_detections
+            self.last_stats = stats
+            self.last_boxes = boxes
+            self.last_annotated_jpeg = annotated_bytes
+            self.last_inference_time = time.time()
 
         total_processing_ms = round((time.perf_counter() - frame_start_t) * 1000, 2)
 
@@ -329,6 +377,7 @@ class StreamSession:
             "frame_id": frame_id,
             "timestamp": round(time.time(), 3),
             "latency_ms": total_processing_ms,
+            "queue_latency_ms": queue_latency_ms,
             "model_inference_ms": model_inference_ms,
             "annotation_ms": annotation_ms,
             "frame_processing_ms": total_processing_ms,
@@ -337,6 +386,8 @@ class StreamSession:
             "detections": boxes,
             "frame_skipped": False,
             "skipped": False,
+            "dropped_frames": self.dropped_frames,
+            "queue_replacements": self.queue_replacements,
         }
 
         return metadata, annotated_bytes

@@ -2,7 +2,7 @@ name: CI - Code Quality & Automated Tests
 
 on:
   push:
-    branches: [main, "hardening/**", "fix/**"]
+    branches: [main, "hardening/**", "fix/**", "feat/**"]
   pull_request:
     branches: [main]
 

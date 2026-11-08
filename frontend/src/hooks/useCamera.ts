@@ -174,9 +174,9 @@ export function useCamera(options: UseCameraOptions = {}) {
     [facingMode, isActive, switchCamera]
   );
 
-  // Capture current video frame to JPEG bytes
+  // Capture current video frame to JPEG bytes with aspect-ratio downscaling
   const captureFrameJpeg = useCallback(
-    async (quality: number = 0.75): Promise<Uint8Array | null> => {
+    async (quality: number = 0.75, maxDimension: number = 640): Promise<Uint8Array | null> => {
       if (isTransitioningRef.current) return null;
 
       const video = videoRef.current;
@@ -188,15 +188,23 @@ export function useCamera(options: UseCameraOptions = {}) {
         canvasRef.current = document.createElement('canvas');
       }
       const canvas = canvasRef.current;
-      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+
+      // Compute scaled dimensions preserving exact camera aspect ratio
+      const naturalMax = Math.max(video.videoWidth, video.videoHeight);
+      const scale =
+        maxDimension > 0 && maxDimension < naturalMax ? maxDimension / naturalMax : 1.0;
+      const targetWidth = Math.round(video.videoWidth * scale);
+      const targetHeight = Math.round(video.videoHeight * scale);
+
+      if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
       }
 
       const ctx = canvas.getContext('2d', { alpha: false });
       if (!ctx) return null;
 
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
 
       return new Promise<Uint8Array | null>((resolve) => {
         canvas.toBlob(

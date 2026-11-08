@@ -11,14 +11,18 @@ import {
   ChevronUp,
   Crosshair,
   Sparkles,
+  Gauge,
+  Maximize2,
 } from 'lucide-react';
 import { useCamera } from '../hooks/useCamera';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { StreamConfig, StreamMetadata } from '../types';
 import { MetricsBar } from './MetricsBar';
 
+const HIGH_WATER_MARK = 64 * 1024; // 64 KB client socket backpressure threshold
+
 export const LiveCameraView: React.FC = () => {
-  // Streaming configuration with full Multi-Object Tracking support
+  // Streaming configuration with Multi-Object Tracking & image_size
   const [config, setConfig] = useState<StreamConfig>({
     confidence_threshold: 0.25,
     iou_threshold: 0.45,
@@ -30,13 +34,16 @@ export const LiveCameraView: React.FC = () => {
     enable_trails: true,
     trace_length: 30,
     target_fps: 12,
+    image_size: 416,
   });
 
   const [targetFps, setTargetFps] = useState<number>(12);
+  const [maxDimension, setMaxDimension] = useState<number>(640); // 640px = 480p default
   const [filterClassInput, setFilterClassInput] = useState<string>('');
   const [annotatedFrameUrl, setAnnotatedFrameUrl] = useState<string | null>(null);
   const [aspectRatio, setAspectRatio] = useState<number>(16 / 9);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [clientDropped, setClientDropped] = useState<number>(0);
 
   // Telemetry state
   const [telemetry, setTelemetry] = useState<StreamMetadata>({
@@ -48,6 +55,9 @@ export const LiveCameraView: React.FC = () => {
     stats: { total_count: 0, class_counts: {}, tracked_count: 0, tracked_class_counts: {} },
     detections: [],
     skipped: false,
+    dropped_frames: 0,
+    queue_replacements: 0,
+    queue_latency_ms: 0,
   });
 
   const {
@@ -70,6 +80,7 @@ export const LiveCameraView: React.FC = () => {
     sendFrame,
     sendConfig,
     sendResetTracker,
+    getBufferedAmount,
   } = useWebSocket({
     config,
     onMetadata: (meta) => setTelemetry(meta),
@@ -78,6 +89,7 @@ export const LiveCameraView: React.FC = () => {
 
   const isStreaming = isCameraActive && isWsConnected;
   const loopRef = useRef<number | null>(null);
+  const isCapturingRef = useRef<boolean>(false);
 
   // Update dynamic aspect ratio when video element loads or changes stream dimensions
   useEffect(() => {
@@ -98,21 +110,39 @@ export const LiveCameraView: React.FC = () => {
     };
   }, [videoRef]);
 
-  // Streaming dispatch loop
+  // Single-flight streaming dispatch loop with backpressure protection
   useEffect(() => {
     if (!isStreaming) {
       if (loopRef.current) {
         clearInterval(loopRef.current);
         loopRef.current = null;
       }
+      isCapturingRef.current = false;
       return;
     }
 
     const intervalMs = Math.round(1000 / targetFps);
     loopRef.current = window.setInterval(async () => {
-      const jpegBytes = await captureFrameJpeg(config.jpeg_quality / 100);
-      if (jpegBytes) {
-        sendFrame(jpegBytes);
+      // 1. Single-flight guard: skip if prior capture/blob is still encoding
+      if (isCapturingRef.current) {
+        setClientDropped((prev) => prev + 1);
+        return;
+      }
+
+      // 2. High-water mark guard: skip if browser socket queue is congested (>64KB)
+      if (getBufferedAmount() > HIGH_WATER_MARK) {
+        setClientDropped((prev) => prev + 1);
+        return;
+      }
+
+      isCapturingRef.current = true;
+      try {
+        const jpegBytes = await captureFrameJpeg(config.jpeg_quality / 100, maxDimension);
+        if (jpegBytes) {
+          sendFrame(jpegBytes);
+        }
+      } finally {
+        isCapturingRef.current = false;
       }
     }, intervalMs);
 
@@ -121,10 +151,12 @@ export const LiveCameraView: React.FC = () => {
         clearInterval(loopRef.current);
         loopRef.current = null;
       }
+      isCapturingRef.current = false;
     };
-  }, [captureFrameJpeg, config.jpeg_quality, isStreaming, sendFrame, targetFps]);
+  }, [captureFrameJpeg, config.jpeg_quality, getBufferedAmount, isStreaming, maxDimension, sendFrame, targetFps]);
 
   const handleStart = async () => {
+    setClientDropped(0);
     await startCamera();
     connectWs();
   };
@@ -133,12 +165,14 @@ export const LiveCameraView: React.FC = () => {
     stopCamera();
     disconnectWs();
     setAnnotatedFrameUrl(null);
+    setClientDropped(0);
   };
 
   // Deterministic camera switch: reset backend tracker before hardware flips
   const handleToggleFacingMode = async () => {
     if (isStreaming) {
       sendResetTracker();
+      setClientDropped(0);
     }
     await toggleFacingMode();
   };
@@ -159,10 +193,11 @@ export const LiveCameraView: React.FC = () => {
 
   const handleResetTracker = () => {
     sendResetTracker();
+    setClientDropped(0);
   };
 
   return (
-    <div className="space-y-4 max-w-5xl mx-auto">
+    <div className="space-y-3.5 max-w-5xl mx-auto">
       {/* Real-time KPI Bar */}
       <MetricsBar
         fps={telemetry.fps}
@@ -173,6 +208,10 @@ export const LiveCameraView: React.FC = () => {
         trackedClassCounts={telemetry.stats.tracked_class_counts}
         skipped={telemetry.skipped}
         isStreaming={isStreaming}
+        droppedFrames={telemetry.dropped_frames}
+        queueReplacements={telemetry.queue_replacements}
+        clientDropped={clientDropped}
+        queueLatencyMs={telemetry.queue_latency_ms}
       />
 
       {/* Main Responsive Viewport Container */}
@@ -321,19 +360,19 @@ export const LiveCameraView: React.FC = () => {
           }`}
         >
           <Sliders className="w-4 h-4 text-sky-400" />
-          <span className="text-xs sm:text-sm font-medium">Settings</span>
+          <span className="text-xs sm:text-sm font-medium">Performance & Vision</span>
           {isSettingsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </button>
       </div>
 
       {/* Collapsible Parameters Drawer */}
       {isSettingsOpen && (
-        <div className="bg-slate-900/95 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-5 animate-fade-in">
+        <div className="bg-slate-900/95 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4 animate-fade-in text-xs">
           {/* Header */}
           <div className="flex items-center justify-between pb-3 border-b border-slate-800 text-sm">
             <div className="flex items-center space-x-2 text-white font-semibold">
               <Sparkles className="w-4 h-4 text-sky-400" />
-              <span>Vision & Tracking Parameters</span>
+              <span>Vision & Performance Tuning</span>
             </div>
             {isStreaming && (
               <button
@@ -346,11 +385,81 @@ export const LiveCameraView: React.FC = () => {
             )}
           </div>
 
+          {/* Section: Stream Resolution & YOLO Input Size */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 bg-slate-950/60 border border-slate-800/80 rounded-xl p-3">
+            {/* Transmission Resolution */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-300 font-semibold flex items-center space-x-1">
+                  <Maximize2 className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Transmission Resolution</span>
+                </span>
+                <span className="text-sky-400 font-mono font-bold">
+                  {maxDimension === 480 ? '360p' : maxDimension === 640 ? '480p' : maxDimension === 1280 ? '720p' : 'Native'}
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {[
+                  { label: '360p', val: 480 },
+                  { label: '480p', val: 640 },
+                  { label: '720p', val: 1280 },
+                  { label: 'Raw', val: 0 },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    onClick={() => setMaxDimension(item.val)}
+                    className={`py-1 text-xs font-mono font-semibold rounded-lg border transition ${
+                      maxDimension === item.val
+                        ? 'bg-sky-600 text-white border-sky-500 shadow-sm'
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-500 leading-tight">
+                480p scales transmission canvas preserving aspect ratio (reduces mobile upload lag by ~85%).
+              </p>
+            </div>
+
+            {/* YOLO Input Size */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-300 font-semibold flex items-center space-x-1">
+                  <Gauge className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>YOLO Input Size</span>
+                </span>
+                <span className="text-emerald-400 font-mono font-bold">
+                  {config.image_size ?? 416}px
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                {[416, 512, 640].map((sz) => (
+                  <button
+                    key={sz}
+                    onClick={() => handleConfigChange({ image_size: sz })}
+                    className={`py-1 text-xs font-mono font-semibold rounded-lg border transition ${
+                      (config.image_size ?? 416) === sz
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`}
+                  >
+                    {sz}px
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-500 leading-tight">
+                416px achieves ~13 FPS inference on Colab CPU (vs 4.6 FPS at 640px).
+              </p>
+            </div>
+          </div>
+
           {/* Section: Tracking Controls */}
-          <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3.5 space-y-3">
+          <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 space-y-2.5">
             <div className="flex items-center justify-between">
               <div>
-                <span className="text-xs font-semibold text-white block">Multi-Object Tracking (ByteTrack)</span>
+                <span className="font-semibold text-white block">Multi-Object Tracking (ByteTrack)</span>
                 <span className="text-[11px] text-slate-400">Assign persistent ID numbers across consecutive frames</span>
               </div>
               <input
@@ -365,7 +474,7 @@ export const LiveCameraView: React.FC = () => {
               <>
                 <div className="flex items-center justify-between pt-2 border-t border-slate-800/60">
                   <div>
-                    <span className="text-xs font-medium text-slate-300 block">Motion Trails</span>
+                    <span className="text-slate-300 font-medium block">Motion Trails</span>
                     <span className="text-[11px] text-slate-400">Render supervision trace trajectory lines</span>
                   </div>
                   <input
@@ -378,7 +487,7 @@ export const LiveCameraView: React.FC = () => {
 
                 {config.enable_trails && (
                   <div className="space-y-1.5 pt-2 border-t border-slate-800/60">
-                    <div className="flex justify-between text-xs">
+                    <div className="flex justify-between">
                       <span className="text-slate-400">Trail Length</span>
                       <span className="text-sky-400 font-mono font-bold">{config.trace_length ?? 30} frames</span>
                     </div>
@@ -398,10 +507,10 @@ export const LiveCameraView: React.FC = () => {
           </div>
 
           {/* Section: Detection Thresholds */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {/* Confidence Slider */}
             <div className="space-y-1.5">
-              <div className="flex justify-between text-xs">
+              <div className="flex justify-between">
                 <span className="text-slate-400 font-medium">Confidence Threshold</span>
                 <span className="text-sky-400 font-mono font-bold">
                   {Math.round(config.confidence_threshold * 100)}%
@@ -422,7 +531,7 @@ export const LiveCameraView: React.FC = () => {
 
             {/* IoU Threshold Slider */}
             <div className="space-y-1.5">
-              <div className="flex justify-between text-xs">
+              <div className="flex justify-between">
                 <span className="text-slate-400 font-medium">NMS IoU Threshold</span>
                 <span className="text-sky-400 font-mono font-bold">
                   {Math.round(config.iou_threshold * 100)}%
@@ -443,16 +552,16 @@ export const LiveCameraView: React.FC = () => {
           </div>
 
           {/* Section: Frame Decimation & Capture Rate */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {/* Decimation Interval */}
             <div className="space-y-1.5">
-              <div className="flex justify-between text-xs">
+              <div className="flex justify-between">
                 <span className="text-slate-400 font-medium">Decimation Interval</span>
                 <span className="text-emerald-400 font-mono font-semibold">
                   {config.skip_interval === 1 ? 'Every Frame (1x)' : `Every ${config.skip_interval}th Frame`}
                 </span>
               </div>
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="grid grid-cols-4 gap-1">
                 {[1, 2, 3, 4].map((n) => (
                   <button
                     key={n}
@@ -471,11 +580,11 @@ export const LiveCameraView: React.FC = () => {
 
             {/* Capture Rate */}
             <div className="space-y-1.5">
-              <div className="flex justify-between text-xs">
+              <div className="flex justify-between">
                 <span className="text-slate-400 font-medium">Capture Rate</span>
                 <span className="text-sky-400 font-mono font-bold">{targetFps} FPS</span>
               </div>
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="grid grid-cols-4 gap-1">
                 {[6, 12, 18, 24].map((fps) => (
                   <button
                     key={fps}
@@ -494,8 +603,8 @@ export const LiveCameraView: React.FC = () => {
           </div>
 
           {/* Section: Class Filter */}
-          <div className="space-y-2">
-            <label className="text-xs text-slate-400 font-medium block">Class Filter (Optional)</label>
+          <div className="space-y-1.5">
+            <label className="text-slate-400 font-medium block">Class Filter (Optional)</label>
             <div className="flex space-x-2">
               <input
                 type="text"
@@ -513,7 +622,7 @@ export const LiveCameraView: React.FC = () => {
               </button>
             </div>
             {config.filter_classes.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1.5">
+              <div className="flex flex-wrap gap-1 mt-1">
                 {config.filter_classes.map((cls) => (
                   <span
                     key={cls}

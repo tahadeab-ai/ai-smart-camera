@@ -25,6 +25,9 @@ export interface StreamMetadata {
   stats: DetectionStats;
   detections: BoundingBox[];
   skipped?: boolean;
+  dropped_frames?: number;
+  queue_replacements?: number;
+  queue_latency_ms?: number;
 }
 
 export interface StreamConfig {
@@ -38,6 +41,7 @@ export interface StreamConfig {
   enable_trails?: boolean;
   trace_length?: number;
   target_fps?: number;
+  image_size?: number;
 }
 
 export interface ImageDetectionResponse {

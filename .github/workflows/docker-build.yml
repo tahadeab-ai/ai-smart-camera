@@ -2,7 +2,7 @@ name: Docker - Build & Runtime Verification
 
 on:
   push:
-    branches: [main, "hardening/**", "fix/**"]
+    branches: [main, "hardening/**", "fix/**", "feat/**"]
   pull_request:
     branches: [main]
 
