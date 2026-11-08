@@ -3,7 +3,6 @@ import {
   Activity,
   Layers,
   Crosshair,
-  ArrowDownCircle,
   RefreshCw,
   Clock,
   Send,

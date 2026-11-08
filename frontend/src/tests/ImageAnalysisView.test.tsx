@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ImageAnalysisView } from '../components/ImageAnalysisView';
 import { ApiClient } from '../api/client';
+import { ImageDetectionResponse } from '../types';
 
 describe('ImageAnalysisView Component', () => {
   beforeEach(() => {
@@ -15,10 +16,16 @@ describe('ImageAnalysisView Component', () => {
   });
 
   it('handles image selection, executes inference, and supports detection selection & split view', async () => {
-    const mockDetectionResult = {
+    const mockDetectionResult: ImageDetectionResponse = {
       latency_ms: 32,
       model_name: 'yolov8n',
       device: 'cpu',
+      image_width: 640,
+      image_height: 480,
+      stats: {
+        total_count: 2,
+        class_counts: { person: 1, cat: 1 },
+      },
       annotated_image: 'data:image/jpeg;base64,mock-annotated-base64',
       detections: [
         { class_name: 'person', confidence: 0.94, x1: 50, y1: 50, x2: 200, y2: 400 },
