@@ -13,10 +13,16 @@ import { AppViewTab, SessionAnalyticsData } from './types';
 
 const INITIAL_ANALYTICS: SessionAnalyticsData = {
   totalFrames: 0,
+  totalSent: 0,
+  rejectedSends: 0,
   processedFrames: 0,
+  displayedFrames: 0,
   droppedFrames: 0,
+  serverDroppedFrames: 0,
+  clientDroppedFrames: 0,
   avgLatencyMs: 0,
   avgFps: 0,
+  avgServerFps: 0,
   classDistribution: {},
   trackedCount: 0,
   maxConcurrentTracked: 0,
@@ -94,8 +100,14 @@ export const App: React.FC = () => {
           onOpenTokenModal={() => setIsTokenModalOpen(true)}
         />
 
-        {/* Viewport Content Area */}
-        <main className="flex-1 min-h-0 overflow-y-auto p-2 sm:p-4 md:p-6 pb-20 md:pb-6">
+        {/* Viewport Content Area: Full-bleed for camera on mobile/desktop; padded container for other tabs */}
+        <main
+          className={`flex-1 min-h-0 ${
+            activeTab === 'camera'
+              ? 'p-0 flex flex-col overflow-hidden pb-16 md:pb-0'
+              : 'overflow-y-auto p-3 sm:p-6 pb-20 md:pb-6 max-w-7xl w-full mx-auto'
+          }`}
+        >
           {activeTab === 'camera' && (
             <LiveCameraView
               onTelemetryUpdate={handleTelemetryUpdate}

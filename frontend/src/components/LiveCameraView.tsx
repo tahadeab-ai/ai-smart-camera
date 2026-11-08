@@ -71,7 +71,9 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
   const sessionStatsRef = useRef<{
     startTime: number;
     totalSent: number;
+    rejectedSends: number;
     processed: number;
+    displayed: number;
     latencySum: number;
     fpsSum: number;
     classDist: Record<string, number>;
@@ -79,12 +81,16 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
   }>({
     startTime: 0,
     totalSent: 0,
+    rejectedSends: 0,
     processed: 0,
+    displayed: 0,
     latencySum: 0,
     fpsSum: 0,
     classDist: {},
     maxTracked: 0,
   });
+
+  const isSwitchingCameraRef = useRef<boolean>(false);
 
   const {
     videoRef,
@@ -119,16 +125,22 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
         }
       }
 
-      const totalDropped = (meta.dropped_frames ?? 0) + clientDropped;
+      const totalDropped = (meta.dropped_frames ?? 0) + stats.rejectedSends + clientDropped;
       const avgLatency = stats.processed > 0 ? stats.latencySum / stats.processed : 0;
       const avgFps = stats.processed > 0 ? stats.fpsSum / stats.processed : 0;
 
       onTelemetryUpdate?.({
         totalFrames: stats.totalSent,
+        totalSent: stats.totalSent,
+        rejectedSends: stats.rejectedSends,
         processedFrames: stats.processed,
+        displayedFrames: stats.displayed,
         droppedFrames: totalDropped,
+        serverDroppedFrames: meta.dropped_frames ?? 0,
+        clientDroppedFrames: stats.rejectedSends + clientDropped,
         avgLatencyMs: avgLatency,
         avgFps: avgFps,
+        avgServerFps: avgFps,
         classDistribution: { ...stats.classDist },
         trackedCount: trackedCount,
         maxConcurrentTracked: stats.maxTracked,
@@ -150,7 +162,12 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
   } = useWebSocket({
     config,
     onMetadata: updateTelemetryCallback,
-    onAnnotatedFrame: (url) => setAnnotatedFrameUrl(url),
+    onAnnotatedFrame: (url) => {
+      if (!isSwitchingCameraRef.current) {
+        sessionStatsRef.current.displayed += 1;
+        setAnnotatedFrameUrl(url);
+      }
+    },
   });
 
   const isStreaming = isCameraActive && isWsConnected;
@@ -181,7 +198,7 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
     };
   }, [videoRef]);
 
-  // Single-flight streaming dispatch loop with backpressure protection
+  // Single-flight streaming dispatch loop with backpressure protection & hardware-transition pausing
   useEffect(() => {
     if (!isStreaming) {
       if (loopRef.current) {
@@ -194,14 +211,21 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
 
     const intervalMs = Math.round(1000 / targetFps);
     loopRef.current = window.setInterval(async () => {
-      // 1. Single-flight guard: skip if prior capture/blob is still encoding
+      // 1. Pause frame transmission during camera flip or transition
+      if (isSwitchingCameraRef.current || isCameraTransitioning) {
+        return;
+      }
+
+      // 2. Single-flight guard: skip if prior capture/blob is still encoding
       if (isCapturingRef.current) {
+        sessionStatsRef.current.rejectedSends += 1;
         setClientDropped((prev) => prev + 1);
         return;
       }
 
-      // 2. High-water mark guard: skip if browser socket queue is congested (>64KB)
+      // 3. High-water mark guard: skip if browser socket queue is congested (>64KB)
       if (getBufferedAmount() > HIGH_WATER_MARK) {
+        sessionStatsRef.current.rejectedSends += 1;
         setClientDropped((prev) => prev + 1);
         return;
       }
@@ -209,9 +233,14 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
       isCapturingRef.current = true;
       try {
         const jpegBytes = await captureFrameJpeg(config.jpeg_quality / 100, maxDimension);
-        if (jpegBytes) {
-          sessionStatsRef.current.totalSent += 1;
-          sendFrame(jpegBytes);
+        if (jpegBytes && !isSwitchingCameraRef.current) {
+          const sent = sendFrame(jpegBytes);
+          if (sent) {
+            sessionStatsRef.current.totalSent += 1;
+          } else {
+            sessionStatsRef.current.rejectedSends += 1;
+            setClientDropped((prev) => prev + 1);
+          }
         }
       } finally {
         isCapturingRef.current = false;
@@ -225,14 +254,40 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
       }
       isCapturingRef.current = false;
     };
-  }, [captureFrameJpeg, config.jpeg_quality, getBufferedAmount, isStreaming, maxDimension, sendFrame, targetFps]);
+  }, [
+    captureFrameJpeg,
+    config.jpeg_quality,
+    getBufferedAmount,
+    isCameraTransitioning,
+    isStreaming,
+    maxDimension,
+    sendFrame,
+    targetFps,
+  ]);
+
+  // Clean unmount lifecycle: releases camera hardware, closes socket, resets active indicators
+  useEffect(() => {
+    return () => {
+      if (loopRef.current) {
+        clearInterval(loopRef.current);
+        loopRef.current = null;
+      }
+      isCapturingRef.current = false;
+      isSwitchingCameraRef.current = false;
+      stopCamera();
+      disconnectWs();
+      onStreamingStateChange?.(false);
+    };
+  }, [disconnectWs, onStreamingStateChange, stopCamera]);
 
   const handleStart = async () => {
     setClientDropped(0);
     sessionStatsRef.current = {
       startTime: Date.now(),
       totalSent: 0,
+      rejectedSends: 0,
       processed: 0,
+      displayed: 0,
       latencySum: 0,
       fpsSum: 0,
       classDist: {},
@@ -247,15 +302,33 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
     disconnectWs();
     setAnnotatedFrameUrl(null);
     setClientDropped(0);
+    onStreamingStateChange?.(false);
   };
 
-  // Deterministic camera switch: reset backend tracker before hardware flips
+  // Deterministic camera switch: pause frames -> clear stale images -> send reset -> await ACK -> flip -> resume
   const handleToggleFacingMode = async () => {
-    if (isStreaming) {
-      sendResetTracker();
+    if (isSwitchingCameraRef.current || isCameraTransitioning) return;
+    isSwitchingCameraRef.current = true;
+
+    try {
+      // 1. Immediately drop any stale annotated frame so old results are never displayed
+      setAnnotatedFrameUrl(null);
       setClientDropped(0);
+
+      // 2. If streaming, send reset_tracker and await ack with timeout
+      if (isStreaming) {
+        const ackSuccess = await sendResetTracker(3000);
+        if (!ackSuccess) {
+          console.warn('Tracker reset ACK timed out or failed during camera switch, proceeding with switch');
+        }
+      }
+
+      // 3. Stop old tracks and acquire the new camera
+      await toggleFacingMode();
+    } finally {
+      // 4. Resume frame capture only after successful transition
+      isSwitchingCameraRef.current = false;
     }
-    await toggleFacingMode();
   };
 
   const handleConfigChange = (changes: Partial<StreamConfig>) => {
@@ -282,9 +355,9 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
   };
 
   return (
-    <div className="relative w-full h-[calc(100vh-8.5rem)] md:h-[calc(100vh-5.5rem)] flex flex-col justify-between overflow-hidden">
+    <div className="relative w-full h-full flex flex-col justify-between overflow-hidden">
       {/* Main Full-Bleed Viewport Container */}
-      <div className="relative flex-1 w-full bg-slate-950 border border-slate-800/80 rounded-2xl md:rounded-3xl overflow-hidden shadow-2xl flex items-center justify-center">
+      <div className="relative flex-1 w-full bg-slate-950 sm:border sm:border-slate-800/80 sm:rounded-3xl overflow-hidden shadow-2xl flex items-center justify-center">
         {/* Aspect Ratio Controlled Inner Frame */}
         <div
           className={`relative w-full h-full flex items-center justify-center overflow-hidden transition-all duration-300 ${

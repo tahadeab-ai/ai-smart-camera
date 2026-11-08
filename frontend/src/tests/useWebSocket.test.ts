@@ -97,7 +97,7 @@ describe('useWebSocket', () => {
     expect(result.current.error).toContain('Authentication required');
   });
 
-  it('sends reset_tracker command over websocket', async () => {
+  it('sends reset_tracker command and resolves true upon reset_tracker_ack', async () => {
     const { result } = renderHook(() => useWebSocket());
 
     await act(async () => {
@@ -107,11 +107,50 @@ describe('useWebSocket', () => {
     const ws = MockWebSocket.instances[0];
     ws.readyState = WebSocket.OPEN;
 
+    let resetPromise: Promise<boolean>;
     act(() => {
-      result.current.sendResetTracker();
+      resetPromise = result.current.sendResetTracker(1000);
     });
 
     expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'reset_tracker' }));
+
+    // Simulate reset_tracker_ack from server
+    await act(async () => {
+      if (ws.onmessage) {
+        ws.onmessage({ data: JSON.stringify({ type: 'reset_tracker_ack', status: 'ok' }) });
+      }
+    });
+
+    const success = await resetPromise!;
+    expect(success).toBe(true);
+  });
+
+  it('resolves false when sendResetTracker times out', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useWebSocket());
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    const ws = MockWebSocket.instances[0];
+    ws.readyState = WebSocket.OPEN;
+
+    let resetPromise: Promise<boolean>;
+    act(() => {
+      resetPromise = result.current.sendResetTracker(500);
+    });
+
+    expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'reset_tracker' }));
+
+    // Advance clock past timeout
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    const success = await resetPromise!;
+    expect(success).toBe(false);
+    vi.useRealTimers();
   });
 
   it('cleans up on disconnect', async () => {

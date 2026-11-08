@@ -87,11 +87,17 @@ export interface ModelListResponse {
 export type AppViewTab = 'camera' | 'image' | 'video' | 'analytics' | 'system';
 
 export interface SessionAnalyticsData {
-  totalFrames: number;
+  totalFrames: number; // Cumulative sent frames (synonym for totalSent)
+  totalSent: number;
+  rejectedSends: number;
   processedFrames: number;
-  droppedFrames: number;
+  displayedFrames: number;
+  droppedFrames: number; // Total dropped frames (server + client)
+  serverDroppedFrames: number;
+  clientDroppedFrames: number;
   avgLatencyMs: number;
-  avgFps: number;
+  avgFps: number; // Average server inference FPS (synonym for avgServerFps)
+  avgServerFps: number;
   classDistribution: Record<string, number>;
   trackedCount: number;
   maxConcurrentTracked: number;

@@ -22,6 +22,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   const isManualDisconnectRef = useRef<boolean>(false);
   const reconnectAttemptsRef = useRef<number>(0);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const pendingResetResolversRef = useRef<Array<(success: boolean) => void>>([]);
 
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +92,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
               onMetadata(data as StreamMetadata);
             } else if (data.type === 'reset_tracker_ack') {
               console.debug('Backend tracker reset confirmed');
+              const resolvers = pendingResetResolversRef.current;
+              pendingResetResolversRef.current = [];
+              resolvers.forEach((resolve) => resolve(true));
             }
           } catch (e) {
             console.warn('Failed to parse WebSocket text message:', e);
@@ -114,6 +118,11 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       ws.onclose = (event) => {
         setIsConnected(false);
         cleanupLastObjectUrl();
+
+        // Cancel any pending tracker reset promises on socket close
+        const resolvers = pendingResetResolversRef.current;
+        pendingResetResolversRef.current = [];
+        resolvers.forEach((resolve) => resolve(false));
 
         if (event.code === 1008) {
           setError('Authentication failed: Invalid access token or ticket.');
@@ -177,6 +186,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+    const resolvers = pendingResetResolversRef.current;
+    pendingResetResolversRef.current = [];
+    resolvers.forEach((resolve) => resolve(false));
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -217,12 +229,43 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     }
   }, []);
 
-  // Explicitly reset server-side ByteTrack tracker and trace annotations
-  const sendResetTracker = useCallback(() => {
+  // Explicitly reset server-side ByteTrack tracker with request/ack correlation & timeout
+  const sendResetTracker = useCallback((timeoutMs: number = 3000): Promise<boolean> => {
     const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'reset_tracker' }));
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return Promise.resolve(false);
     }
+
+    return new Promise<boolean>((resolve) => {
+      let timer: number | null = null;
+
+      const handleAck = (success: boolean) => {
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        resolve(success);
+      };
+
+      timer = window.setTimeout(() => {
+        pendingResetResolversRef.current = pendingResetResolversRef.current.filter((r) => r !== handleAck);
+        console.warn(`reset_tracker_ack timed out after ${timeoutMs}ms`);
+        resolve(false);
+      }, timeoutMs);
+
+      pendingResetResolversRef.current.push(handleAck);
+      try {
+        ws.send(JSON.stringify({ type: 'reset_tracker' }));
+      } catch (err) {
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        pendingResetResolversRef.current = pendingResetResolversRef.current.filter((r) => r !== handleAck);
+        console.warn('Failed to send reset_tracker message:', err);
+        resolve(false);
+      }
+    });
   }, []);
 
   // Inspect client socket outbound buffer for backpressure control
