@@ -97,7 +97,7 @@ describe('useWebSocket', () => {
     expect(result.current.error).toContain('Authentication required');
   });
 
-  it('sends reset_tracker command and resolves true upon reset_tracker_ack', async () => {
+  it('sends reset_tracker with request_id and resolves true when matching request_id is acked', async () => {
     const { result } = renderHook(() => useWebSocket());
 
     await act(async () => {
@@ -112,12 +112,22 @@ describe('useWebSocket', () => {
       resetPromise = result.current.sendResetTracker(1000);
     });
 
-    expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'reset_tracker' }));
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const sentMsg = JSON.parse(ws.send.mock.calls[0][0]);
+    expect(sentMsg.type).toBe('reset_tracker');
+    expect(typeof sentMsg.request_id).toBe('string');
+    expect(sentMsg.request_id.length).toBeGreaterThan(0);
 
-    // Simulate reset_tracker_ack from server
+    // Simulate reset_tracker_ack from server with matching request_id
     await act(async () => {
       if (ws.onmessage) {
-        ws.onmessage({ data: JSON.stringify({ type: 'reset_tracker_ack', status: 'ok' }) });
+        ws.onmessage({
+          data: JSON.stringify({
+            type: 'reset_tracker_ack',
+            status: 'ok',
+            request_id: sentMsg.request_id,
+          }),
+        });
       }
     });
 
@@ -125,7 +135,75 @@ describe('useWebSocket', () => {
     expect(success).toBe(true);
   });
 
-  it('resolves false when sendResetTracker times out', async () => {
+  it('supports concurrent reset requests and correlates out-of-order acknowledgements', async () => {
+    const { result } = renderHook(() => useWebSocket());
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    const ws = MockWebSocket.instances[0];
+    ws.readyState = WebSocket.OPEN;
+
+    let p1: Promise<boolean>;
+    let p2: Promise<boolean>;
+
+    act(() => {
+      p1 = result.current.sendResetTracker(2000);
+      p2 = result.current.sendResetTracker(2000);
+    });
+
+    expect(ws.send).toHaveBeenCalledTimes(2);
+    const msg1 = JSON.parse(ws.send.mock.calls[0][0]);
+    const msg2 = JSON.parse(ws.send.mock.calls[1][0]);
+    expect(msg1.request_id).not.toBe(msg2.request_id);
+
+    let p1Resolved = false;
+    let p2Resolved = false;
+    p1!.then(() => {
+      p1Resolved = true;
+    });
+    p2!.then(() => {
+      p2Resolved = true;
+    });
+
+    // 1. Deliver ACK for request 2 FIRST (out of order)
+    await act(async () => {
+      if (ws.onmessage) {
+        ws.onmessage({
+          data: JSON.stringify({
+            type: 'reset_tracker_ack',
+            status: 'ok',
+            request_id: msg2.request_id,
+          }),
+        });
+      }
+    });
+
+    const res2 = await p2!;
+    expect(res2).toBe(true);
+    expect(p2Resolved).toBe(true);
+    expect(p1Resolved).toBe(false); // p1 must still be pending!
+
+    // 2. Deliver ACK for request 1 SECOND
+    await act(async () => {
+      if (ws.onmessage) {
+        ws.onmessage({
+          data: JSON.stringify({
+            type: 'reset_tracker_ack',
+            status: 'ok',
+            request_id: msg1.request_id,
+          }),
+        });
+      }
+    });
+
+    const res1 = await p1!;
+    expect(res1).toBe(true);
+    expect(p1Resolved).toBe(true);
+  });
+
+  it('handles timeout for one request without affecting another in-flight request', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useWebSocket());
 
@@ -136,21 +214,70 @@ describe('useWebSocket', () => {
     const ws = MockWebSocket.instances[0];
     ws.readyState = WebSocket.OPEN;
 
-    let resetPromise: Promise<boolean>;
+    let p1: Promise<boolean>;
+    let p2: Promise<boolean>;
+
     act(() => {
-      resetPromise = result.current.sendResetTracker(500);
+      p1 = result.current.sendResetTracker(300); // 300ms timeout
+      p2 = result.current.sendResetTracker(2000); // 2000ms timeout
     });
 
-    expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'reset_tracker' }));
+    const msg1 = JSON.parse(ws.send.mock.calls[0][0]);
+    const msg2 = JSON.parse(ws.send.mock.calls[1][0]);
 
-    // Advance clock past timeout
+    // Advance by 400ms -> p1 times out, p2 remains pending
     await act(async () => {
-      vi.advanceTimersByTime(600);
+      vi.advanceTimersByTime(400);
     });
 
-    const success = await resetPromise!;
-    expect(success).toBe(false);
+    const res1 = await p1!;
+    expect(res1).toBe(false);
+
+    // Deliver ACK for p2 before its 2000ms expires
+    await act(async () => {
+      if (ws.onmessage) {
+        ws.onmessage({
+          data: JSON.stringify({
+            type: 'reset_tracker_ack',
+            status: 'ok',
+            request_id: msg2.request_id,
+          }),
+        });
+      }
+    });
+
+    const res2 = await p2!;
+    expect(res2).toBe(true);
+
     vi.useRealTimers();
+  });
+
+  it('cancels all pending reset requests and resolves false on disconnect', async () => {
+    const { result } = renderHook(() => useWebSocket());
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    const ws = MockWebSocket.instances[0];
+    ws.readyState = WebSocket.OPEN;
+
+    let p1: Promise<boolean>;
+    let p2: Promise<boolean>;
+
+    act(() => {
+      p1 = result.current.sendResetTracker(5000);
+      p2 = result.current.sendResetTracker(5000);
+    });
+
+    act(() => {
+      result.current.disconnect();
+    });
+
+    const [res1, res2] = await Promise.all([p1!, p2!]);
+    expect(res1).toBe(false);
+    expect(res2).toBe(false);
+    expect(result.current.isConnected).toBe(false);
   });
 
   it('cleans up on disconnect', async () => {

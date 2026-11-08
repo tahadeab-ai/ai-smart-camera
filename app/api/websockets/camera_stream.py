@@ -194,6 +194,8 @@ async def websocket_camera_stream(
                         )
 
                     elif msg_type == "reset_tracker":
+                        request_id = data.get("request_id")
+
                         # 1. Drain pending unstarted input frames and unwritten outputs
                         _drain_queues()
 
@@ -204,9 +206,10 @@ async def websocket_camera_stream(
                         _drain_queues()
 
                         # 4. Immediate acknowledgment guaranteeing stale results cannot be emitted
-                        await _send_control_text(
-                            json.dumps({"type": "reset_tracker_ack", "status": "ok"})
-                        )
+                        ack_payload = {"type": "reset_tracker_ack", "status": "ok"}
+                        if request_id is not None:
+                            ack_payload["request_id"] = request_id
+                        await _send_control_text(json.dumps(ack_payload))
 
                     elif msg_type == "ping":
                         await _send_control_text(json.dumps({"type": "pong"}))

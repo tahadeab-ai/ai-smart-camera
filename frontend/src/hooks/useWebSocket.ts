@@ -13,6 +13,11 @@ const MAX_RECONNECT_DELAY_MS = 30000;
 const RECONNECT_FACTOR = 1.5;
 const MAX_RECONNECT_ATTEMPTS = 5;
 
+interface PendingResetRequest {
+  resolve: (success: boolean) => void;
+  timer: number;
+}
+
 export function useWebSocket(options: UseWebSocketOptions = {}) {
   const { onMetadata, onAnnotatedFrame, config } = options;
 
@@ -22,7 +27,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   const isManualDisconnectRef = useRef<boolean>(false);
   const reconnectAttemptsRef = useRef<number>(0);
   const reconnectTimeoutRef = useRef<number | null>(null);
-  const pendingResetResolversRef = useRef<Array<(success: boolean) => void>>([]);
+  const pendingResetRequestsRef = useRef<Map<string, PendingResetRequest>>(new Map());
 
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,10 +96,24 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
             if (data.type === 'detection' && onMetadata) {
               onMetadata(data as StreamMetadata);
             } else if (data.type === 'reset_tracker_ack') {
-              console.debug('Backend tracker reset confirmed');
-              const resolvers = pendingResetResolversRef.current;
-              pendingResetResolversRef.current = [];
-              resolvers.forEach((resolve) => resolve(true));
+              const reqId = data.request_id as string | undefined;
+              if (reqId && pendingResetRequestsRef.current.has(reqId)) {
+                const entry = pendingResetRequestsRef.current.get(reqId)!;
+                clearTimeout(entry.timer);
+                pendingResetRequestsRef.current.delete(reqId);
+                console.debug(`Backend tracker reset confirmed for request ${reqId}`);
+                entry.resolve(true);
+              } else if (!reqId && pendingResetRequestsRef.current.size > 0) {
+                // Fallback for un-tagged ack (e.g. legacy backend)
+                const firstEntry = pendingResetRequestsRef.current.entries().next().value;
+                if (firstEntry) {
+                  const [firstId, entry] = firstEntry;
+                  clearTimeout(entry.timer);
+                  pendingResetRequestsRef.current.delete(firstId);
+                  console.debug(`Backend tracker reset confirmed for un-tagged request ${firstId}`);
+                  entry.resolve(true);
+                }
+              }
             }
           } catch (e) {
             console.warn('Failed to parse WebSocket text message:', e);
@@ -120,9 +139,12 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
         cleanupLastObjectUrl();
 
         // Cancel any pending tracker reset promises on socket close
-        const resolvers = pendingResetResolversRef.current;
-        pendingResetResolversRef.current = [];
-        resolvers.forEach((resolve) => resolve(false));
+        const pending = pendingResetRequestsRef.current;
+        pendingResetRequestsRef.current = new Map();
+        pending.forEach(({ resolve, timer }) => {
+          clearTimeout(timer);
+          resolve(false);
+        });
 
         if (event.code === 1008) {
           setError('Authentication failed: Invalid access token or ticket.');
@@ -186,9 +208,12 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
-    const resolvers = pendingResetResolversRef.current;
-    pendingResetResolversRef.current = [];
-    resolvers.forEach((resolve) => resolve(false));
+    const pending = pendingResetRequestsRef.current;
+    pendingResetRequestsRef.current = new Map();
+    pending.forEach(({ resolve, timer }) => {
+      clearTimeout(timer);
+      resolve(false);
+    });
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -229,39 +254,32 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     }
   }, []);
 
-  // Explicitly reset server-side ByteTrack tracker with request/ack correlation & timeout
+  // Explicitly reset server-side ByteTrack tracker with request_id correlation & timeout
   const sendResetTracker = useCallback((timeoutMs: number = 3000): Promise<boolean> => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       return Promise.resolve(false);
     }
 
+    const requestId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
     return new Promise<boolean>((resolve) => {
-      let timer: number | null = null;
-
-      const handleAck = (success: boolean) => {
-        if (timer !== null) {
-          clearTimeout(timer);
-          timer = null;
-        }
-        resolve(success);
-      };
-
-      timer = window.setTimeout(() => {
-        pendingResetResolversRef.current = pendingResetResolversRef.current.filter((r) => r !== handleAck);
-        console.warn(`reset_tracker_ack timed out after ${timeoutMs}ms`);
+      const timer = window.setTimeout(() => {
+        pendingResetRequestsRef.current.delete(requestId);
+        console.warn(`reset_tracker_ack timed out after ${timeoutMs}ms for request ${requestId}`);
         resolve(false);
       }, timeoutMs);
 
-      pendingResetResolversRef.current.push(handleAck);
+      pendingResetRequestsRef.current.set(requestId, { resolve, timer });
+
       try {
-        ws.send(JSON.stringify({ type: 'reset_tracker' }));
+        ws.send(JSON.stringify({ type: 'reset_tracker', request_id: requestId }));
       } catch (err) {
-        if (timer !== null) {
-          clearTimeout(timer);
-          timer = null;
-        }
-        pendingResetResolversRef.current = pendingResetResolversRef.current.filter((r) => r !== handleAck);
+        clearTimeout(timer);
+        pendingResetRequestsRef.current.delete(requestId);
         console.warn('Failed to send reset_tracker message:', err);
         resolve(false);
       }

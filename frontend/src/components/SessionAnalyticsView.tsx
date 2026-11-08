@@ -26,7 +26,6 @@ export const SessionAnalyticsView: React.FC<SessionAnalyticsViewProps> = ({
   const {
     totalSent,
     totalFrames,
-    rejectedSends,
     processedFrames,
     displayedFrames,
     serverDroppedFrames,
@@ -56,9 +55,8 @@ export const SessionAnalyticsView: React.FC<SessionAnalyticsViewProps> = ({
   const sessionSeconds = sessionDurationSec % 60;
 
   const actualSent = totalSent || totalFrames || 0;
-  const effectiveFps = avgServerFps || avgFps || 0;
   const actualServerDrops = serverDroppedFrames ?? 0;
-  const actualClientDrops = clientDroppedFrames ?? rejectedSends ?? 0;
+  const actualClientDrops = clientDroppedFrames ?? 0;
 
   const sortedClasses = Object.entries(classDistribution).sort((a, b) => b[1] - a[1]);
   const totalDetectionsCount = Object.values(classDistribution).reduce((sum, v) => sum + v, 0);
@@ -138,7 +136,7 @@ export const SessionAnalyticsView: React.FC<SessionAnalyticsViewProps> = ({
               <Eye className="w-4 h-4 text-teal-400" />
             </div>
             <div className="text-2xl font-bold text-teal-400 font-mono">
-              {processedFrames} <span className="text-xs text-slate-400 font-normal">/ {displayedFrames || processedFrames}</span>
+              {processedFrames} <span className="text-xs text-slate-400 font-normal">/ {displayedFrames}</span>
             </div>
             <div className="text-[11px] text-slate-500 mt-1">
               Frames evaluated & rendered
@@ -169,18 +167,32 @@ export const SessionAnalyticsView: React.FC<SessionAnalyticsViewProps> = ({
           <span>Pipeline Performance & Multi-Object Tracking</span>
         </h3>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
           {/* Average Server FPS */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
             <div className="flex items-center justify-between text-slate-400 mb-2">
-              <span className="text-xs font-medium">Inference Rate</span>
+              <span className="text-xs font-medium">Server Inference</span>
               <Activity className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="text-2xl font-bold text-emerald-400 font-mono">
-              {effectiveFps.toFixed(1)} <span className="text-xs text-slate-400 font-normal">FPS</span>
+              {avgServerFps.toFixed(1)} <span className="text-xs text-slate-400 font-normal">FPS</span>
             </div>
             <div className="text-[11px] text-slate-500 mt-1">
-              Average server inference rate
+              YOLO & ByteTrack execution
+            </div>
+          </div>
+
+          {/* Display Render Rate */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-xs font-medium">Display Render</span>
+              <Eye className="w-4 h-4 text-teal-400" />
+            </div>
+            <div className="text-2xl font-bold text-teal-400 font-mono">
+              {avgFps.toFixed(1)} <span className="text-xs text-slate-400 font-normal">FPS</span>
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1">
+              Browser painted frame rate
             </div>
           </div>
 

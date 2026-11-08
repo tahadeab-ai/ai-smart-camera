@@ -89,15 +89,17 @@ export type AppViewTab = 'camera' | 'image' | 'video' | 'analytics' | 'system';
 export interface SessionAnalyticsData {
   totalFrames: number; // Cumulative sent frames (synonym for totalSent)
   totalSent: number;
-  rejectedSends: number;
+  captureBusyDrops: number; // Capture skipped because another capture was in progress
+  bufferCongestedDrops: number; // Capture skipped because bufferedAmount > 64KB
+  sendFailedDrops: number; // sendFrame returned false
+  clientDroppedFrames: number; // Canonical total client drops (captureBusy + bufferCongested + sendFailed)
+  serverDroppedFrames: number; // Server worker queue replacement drops
   processedFrames: number;
-  displayedFrames: number;
-  droppedFrames: number; // Total dropped frames (server + client)
-  serverDroppedFrames: number;
-  clientDroppedFrames: number;
+  displayedFrames: number; // Frames decoded and painted by the browser (<img onLoad>)
+  droppedFrames: number; // Total dropped frames (serverDroppedFrames + clientDroppedFrames)
   avgLatencyMs: number;
-  avgFps: number; // Average server inference FPS (synonym for avgServerFps)
-  avgServerFps: number;
+  avgFps: number; // Actual average client displayed/rendered FPS
+  avgServerFps: number; // Server-side YOLO & ByteTrack inference FPS
   classDistribution: Record<string, number>;
   trackedCount: number;
   maxConcurrentTracked: number;

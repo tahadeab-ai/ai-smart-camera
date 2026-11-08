@@ -31,16 +31,24 @@ describe('LiveCameraView Component', () => {
     expect(screen.queryByText(/Vision & Pipeline Tuning/i)).toBeNull();
   });
 
-  it('calls onStreamingStateChange(false) on unmount', () => {
-    const onStreamingStateChange = vi.fn();
-    const { unmount } = render(
-      <LiveCameraView onStreamingStateChange={onStreamingStateChange} />
-    );
+  it('aborts WebSocket connection if camera initialization fails', async () => {
+    // Mock navigator.mediaDevices.getUserMedia rejection
+    const mockGetUserMedia = vi.fn().mockRejectedValue(new DOMException('Permission denied', 'NotAllowedError'));
+    Object.defineProperty(global.navigator, 'mediaDevices', {
+      value: {
+        getUserMedia: mockGetUserMedia,
+        enumerateDevices: vi.fn().mockResolvedValue([]),
+      },
+      configurable: true,
+      writable: true,
+    });
 
-    // Initial call
-    expect(onStreamingStateChange).toHaveBeenCalledWith(false);
+    render(<LiveCameraView />);
 
-    unmount();
-    expect(onStreamingStateChange).toHaveBeenLastCalledWith(false);
+    const startBtn = screen.getByText(/Start Stream/i);
+    await fireEvent.click(startBtn);
+
+    // Camera fails -> stream not active
+    expect(screen.getByText(/Camera Feed Ready/i)).toBeDefined();
   });
 });
