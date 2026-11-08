@@ -97,7 +97,12 @@ def run_benchmark() -> dict[str, Any]:
         # Measure explicit warm-up pass
         dummy_rgb = np.zeros((480, 640, 3), dtype=np.uint8)
         start_warmup = time.perf_counter()
-        _ = service.detector.predict(dummy_rgb, confidence=0.25, iou_threshold=0.45)
+        _ = service.inference_engine.predict(
+            image=dummy_rgb,
+            confidence_threshold=0.25,
+            iou_threshold=0.45,
+            image_size=640,
+        )
         warmup_time_ms = round((time.perf_counter() - start_warmup) * 1000, 2)
 
         print(f"  Initialization: {init_time_ms} ms | Warm-up Pass: {warmup_time_ms} ms")
@@ -137,10 +142,16 @@ def run_benchmark() -> dict[str, Any]:
                 # Stage B: YOLO Inference
                 t0 = time.perf_counter()
                 rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
-                detections = service.detector.predict(
-                    rgb_img,
-                    confidence=session.config.confidence_threshold,
+                results, _ = service.inference_engine.predict(
+                    image=rgb_img,
+                    confidence_threshold=session.config.confidence_threshold,
                     iou_threshold=session.config.iou_threshold,
+                    image_size=640,
+                )
+                detections = service.detector.process_results(
+                    results=results,
+                    filter_classes=session.config.filter_classes or None,
+                    min_confidence=session.config.confidence_threshold,
                 )
                 t_infer = (time.perf_counter() - t0) * 1000
 
@@ -151,19 +162,21 @@ def run_benchmark() -> dict[str, Any]:
 
                 # Stage D: Supervision Annotation
                 t0 = time.perf_counter()
-                annotated_bgr = service.annotator.annotate(
-                    scene=bgr_img.copy(),
+                annotated_rgb = service.annotator.annotate(
+                    scene=rgb_img.copy(),
                     detections=tracked_detections,
+                    class_names=service.detector.class_names,
                 )
                 if session.trace_annotator and len(tracked_detections) > 0:
-                    annotated_bgr = session.trace_annotator.annotate(
-                        scene=annotated_bgr,
+                    annotated_rgb = session.trace_annotator.annotate(
+                        scene=annotated_rgb,
                         detections=tracked_detections,
                     )
                 t_annot = (time.perf_counter() - t0) * 1000
 
                 # Stage E: JPEG Encode
                 t0 = time.perf_counter()
+                annotated_bgr = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
                 _, enc_bytes = cv2.imencode(
                     ".jpg",
                     annotated_bgr,
