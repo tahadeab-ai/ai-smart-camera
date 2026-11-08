@@ -5,32 +5,42 @@ import {
 } from '../types';
 
 let inMemoryToken: string | null = null;
+const tokenChangeListeners: Array<(hasToken: boolean) => void> = [];
 
 export class ApiClient {
+  /**
+   * Strictly store token in-memory only.
+   * Never persist to localStorage, sessionStorage, or cookies.
+   */
   static setToken(token: string | null): void {
-    inMemoryToken = token;
-    if (token) {
+    inMemoryToken = token && token.trim() ? token.trim() : null;
+    tokenChangeListeners.forEach((listener) => {
       try {
-        localStorage.setItem('ai_cam_token', token);
-      } catch {
-        // LocalStorage might be disabled in private mode
+        listener(Boolean(inMemoryToken));
+      } catch (err) {
+        console.warn('Error in token change listener:', err);
       }
-    } else {
-      try {
-        localStorage.removeItem('ai_cam_token');
-      } catch {
-        // Ignore
-      }
-    }
+    });
+  }
+
+  static clearToken(): void {
+    this.setToken(null);
   }
 
   static getToken(): string | null {
-    if (inMemoryToken) return inMemoryToken;
-    try {
-      return localStorage.getItem('ai_cam_token');
-    } catch {
-      return null;
-    }
+    return inMemoryToken;
+  }
+
+  static hasToken(): boolean {
+    return inMemoryToken !== null;
+  }
+
+  static onTokenChange(listener: (hasToken: boolean) => void): () => void {
+    tokenChangeListeners.push(listener);
+    return () => {
+      const idx = tokenChangeListeners.indexOf(listener);
+      if (idx !== -1) tokenChangeListeners.splice(idx, 1);
+    };
   }
 
   private static getHeaders(extraHeaders: HeadersInit = {}): HeadersInit {
@@ -42,9 +52,29 @@ export class ApiClient {
     return headers;
   }
 
+  private static async handleResponseError(res: Response, fallbackPrefix: string): Promise<never> {
+    const err = await res.json().catch(() => ({}));
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        err.error?.message || 'Authentication required: Invalid or missing access token.'
+      );
+    }
+    throw new Error(err.error?.message || `${fallbackPrefix}: ${res.statusText}`);
+  }
+
   static async getHealth(): Promise<{ status: string; version: string }> {
     const res = await fetch('/api/v1/health/live');
-    if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`);
+    if (!res.ok) {
+      return this.handleResponseError(res, 'Health check failed');
+    }
+    return res.json();
+  }
+
+  static async getVersion(): Promise<{ version: string; commit_sha: string }> {
+    const res = await fetch('/api/v1/system/version');
+    if (!res.ok) {
+      return this.handleResponseError(res, 'Version check failed');
+    }
     return res.json();
   }
 
@@ -52,7 +82,9 @@ export class ApiClient {
     const res = await fetch('/api/v1/system/info', {
       headers: this.getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to load system info: ${res.statusText}`);
+    if (!res.ok) {
+      return this.handleResponseError(res, 'Failed to load system info');
+    }
     return res.json();
   }
 
@@ -60,7 +92,9 @@ export class ApiClient {
     const res = await fetch('/api/v1/models', {
       headers: this.getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to load models: ${res.statusText}`);
+    if (!res.ok) {
+      return this.handleResponseError(res, 'Failed to load models');
+    }
     return res.json();
   }
 
@@ -71,8 +105,7 @@ export class ApiClient {
       body: JSON.stringify({ model_name: modelName, device }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Failed to switch model: ${res.statusText}`);
+      return this.handleResponseError(res, 'Failed to switch model');
     }
   }
 
@@ -82,8 +115,7 @@ export class ApiClient {
       headers: this.getHeaders(),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Failed to acquire WS ticket: ${res.statusText}`);
+      return this.handleResponseError(res, 'Failed to acquire WS ticket');
     }
     return res.json();
   }
@@ -109,8 +141,7 @@ export class ApiClient {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Detection failed: ${res.statusText}`);
+      return this.handleResponseError(res, 'Image detection failed');
     }
 
     return res.json();

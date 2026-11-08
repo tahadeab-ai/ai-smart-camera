@@ -44,17 +44,80 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Shutting down AI Smart Camera services...")
 
 
+class ContentSizeLimitMiddleware:
+    """ASGI-level request body size limit to reject oversized payloads before multipart parsing."""
+
+    def __init__(self, app, max_upload_size_bytes: int) -> None:
+        self.app = app
+        self.max_upload_size_bytes = max_upload_size_bytes
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            content_length = None
+            for name, value in scope.get("headers", []):
+                if name.lower() == b"content-length":
+                    try:
+                        content_length = int(value.decode("latin-1"))
+                    except ValueError:
+                        pass
+                    break
+
+            if content_length is not None and content_length > self.max_upload_size_bytes:
+                response = JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={
+                        "error": {
+                            "code": "PAYLOAD_TOO_LARGE",
+                            "message": f"Request body ({content_length} bytes) exceeds maximum limit of {self.max_upload_size_bytes} bytes.",
+                        }
+                    },
+                )
+                await response(scope, receive, send)
+                return
+
+            bytes_received = 0
+
+            async def custom_receive():
+                nonlocal bytes_received
+                message = await receive()
+                if message["type"] == "http.request":
+                    body = message.get("body", b"")
+                    bytes_received += len(body)
+                    if bytes_received > self.max_upload_size_bytes:
+                        err_res = JSONResponse(
+                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            content={
+                                "error": {
+                                    "code": "PAYLOAD_TOO_LARGE",
+                                    "message": f"Request body stream exceeds maximum limit of {self.max_upload_size_bytes} bytes.",
+                                }
+                            },
+                        )
+                        await err_res(scope, receive, send)
+                        return {"type": "http.disconnect"}
+                return message
+
+            await self.app(scope, custom_receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
 def create_app() -> FastAPI:
     """Builds and configures the FastAPI application."""
     app = FastAPI(
         title="AI Smart Camera API",
         description="High-performance edge-ready Computer Vision backend with YOLO, Supervision, and WebSockets.",
-        version="0.2.1",
+        version="0.2.2",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/api/v1/openapi.json",
         lifespan=lifespan,
     )
+
+    # Enforce ASGI-level max body size limit (settings.max_upload_size_mb)
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    app.add_middleware(ContentSizeLimitMiddleware, max_upload_size_bytes=max_bytes)
 
     # CORS configuration for cross-origin local development and Colab tunneling
     app.add_middleware(
@@ -122,18 +185,26 @@ def create_app() -> FastAPI:
         # Check if direct file exists in dist
         file_path = dist_dir / full_path
         if file_path.is_file():
+            if file_path.name == "index.html":
+                return FileResponse(
+                    file_path,
+                    headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+                )
             return FileResponse(file_path)
 
         # Fallback to index.html for SPA client-side routing
         index_file = dist_dir / "index.html"
         if index_file.is_file():
-            return FileResponse(index_file)
+            return FileResponse(
+                index_file,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
 
         # Fallback if frontend has not been compiled yet
         return HTMLResponse(
             content="""<!DOCTYPE html>
 <html>
-<head><title>AI Smart Camera v0.2.1</title>
+<head><title>AI Smart Camera v0.2.2</title>
 <style>
 body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
 .card { background: #1e293b; padding: 2.5rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); max-width: 520px; text-align: center; border: 1px solid #334155; }
@@ -145,7 +216,7 @@ a:hover { text-decoration: underline; }
 </head>
 <body>
 <div class="card">
-  <h1>AI Smart Camera <span class="badge">v0.2.1</span></h1>
+  <h1>AI Smart Camera <span class="badge">v0.2.2</span></h1>
   <p>FastAPI backend is running and ready.</p>
   <p>Explore the interactive API documentation at <a href="/docs">/docs</a> or <a href="/redoc">/redoc</a>.</p>
   <p><small style="color: #94a3b8;">Compile the React frontend into <code>frontend/dist</code> to view the full web application interface.</small></p>

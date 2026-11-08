@@ -19,13 +19,23 @@ class AppSettings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 7860
     gradio_share: bool = False
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = [
+        "http://localhost:7860",
+        "http://127.0.0.1:7860",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+    allow_originless_ws: bool = False
+    trusted_proxies: list[str] = ["127.0.0.1", "::1"]
     static_dir: Path = Path("./frontend/dist")
 
     # Security & Rate Limiting
     access_token: str | None = None
     max_concurrent_streams: int = 5
     max_upload_size_mb: int = 20
+    max_ws_frame_size_mb: float = 2.0
 
     # Model Configuration
     model_name: str = "yolov8n"

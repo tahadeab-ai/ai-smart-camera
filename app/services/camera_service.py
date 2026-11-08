@@ -92,6 +92,9 @@ class CameraService:
         if detections is None or len(detections) == 0:
             return boxes
 
+        has_tracker = (
+            hasattr(detections, "tracker_id") and detections.tracker_id is not None
+        )
         for i in range(len(detections)):
             x1, y1, x2, y2 = detections.xyxy[i].tolist()
             conf = (
@@ -101,6 +104,12 @@ class CameraService:
             )
             cid = int(detections.class_id[i]) if detections.class_id is not None else -1
             cname = self.detector.class_names.get(cid, str(cid))
+            tracker_id = None
+            if has_tracker and detections.tracker_id[i] is not None:
+                try:
+                    tracker_id = int(detections.tracker_id[i])
+                except (ValueError, TypeError):
+                    tracker_id = None
             boxes.append(
                 {
                     "x1": round(float(x1), 2),
@@ -110,6 +119,7 @@ class CameraService:
                     "confidence": round(float(conf), 4),
                     "class_id": cid,
                     "class_name": cname,
+                    "tracker_id": tracker_id,
                 }
             )
         return boxes

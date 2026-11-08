@@ -1,8 +1,8 @@
-# Reproducibility Guide: v0.2.1
+# Reproducibility Guide: v0.2.2
 
 ## Overview
 
-AI Smart Camera v0.2.1 enforces strict dependency locking, deterministic build pipelines, and automated multi-environment verification across Google Colab, Docker, and GitHub Actions CI.
+AI Smart Camera v0.2.2 enforces strict dependency locking, deterministic build pipelines, and automated multi-environment verification across Google Colab, Docker, and GitHub Actions CI. All conditional fallback installs have been eliminated to ensure builds fail if lockfiles are missing or tampered with.
 
 ---
 
@@ -79,7 +79,7 @@ If an in-transit corruption or upstream asset tampering occurs, `ModelLoader` im
 Build and run the production image using the multi-stage Dockerfile:
 
 ```bash
-docker build -t ai-smart-camera:0.2.1 .
-docker run -d -p 7860:7860 --name ai-camera-instance ai-smart-camera:0.2.1
+docker build -t ai-smart-camera:0.2.2 .
+docker run -d -p 7860:7860 --name ai-camera-instance ai-smart-camera:0.2.2
 curl http://localhost:7860/api/v1/health/live
 ```

@@ -2,7 +2,7 @@ name: CI - Code Quality & Automated Tests
 
 on:
   push:
-    branches: [main, "hardening/**"]
+    branches: [main, "hardening/**", "fix/**"]
   pull_request:
     branches: [main]
 
@@ -47,16 +47,19 @@ jobs:
         with:
           node-version: 20
           cache: "npm"
-          cache-dependency-path: frontend/package.json
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Verify Package Lockfile Exists
+        working-directory: frontend
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "ERROR: frontend/package-lock.json is missing! A deterministic lockfile is mandatory."
+            exit 1
+          fi
 
       - name: Install Frontend Dependencies
         working-directory: frontend
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+        run: npm ci
 
       - name: Run Frontend Unit Tests
         working-directory: frontend

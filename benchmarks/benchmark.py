@@ -133,6 +133,7 @@ def run_benchmark(
             "max_latency_ms": round(max_latency, 2),
             "std_dev_ms": round(std_latency, 2),
             "throughput_fps": round(fps, 1),
+            "raw_samples_ms": [round(x, 2) for x in latencies_ms],
         },
     }
 

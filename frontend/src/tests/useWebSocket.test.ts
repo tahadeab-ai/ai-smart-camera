@@ -39,6 +39,7 @@ describe('useWebSocket', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    ApiClient.clearToken();
   });
 
   it('initializes in disconnected state', () => {
@@ -51,7 +52,7 @@ describe('useWebSocket', () => {
     const { result } = renderHook(() => useWebSocket());
 
     await act(async () => {
-      result.current.connect();
+      await result.current.connect();
     });
 
     expect(ApiClient.getWsTicket).toHaveBeenCalled();
@@ -68,11 +69,56 @@ describe('useWebSocket', () => {
     expect(result.current.isConnected).toBe(true);
   });
 
+  it('never puts permanent token into the WebSocket URL query string', async () => {
+    ApiClient.setToken('super-secret-permanent-master-token');
+    const { result } = renderHook(() => useWebSocket());
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    expect(MockWebSocket.instances.length).toBe(1);
+    const wsUrl = MockWebSocket.instances[0].url;
+    expect(wsUrl).not.toContain('token=');
+    expect(wsUrl).not.toContain('super-secret-permanent-master-token');
+    expect(wsUrl).toContain('ticket=mock-ticket-abc');
+  });
+
+  it('aborts connection attempt if ticket acquisition fails with 401', async () => {
+    vi.spyOn(ApiClient, 'getWsTicket').mockRejectedValueOnce(new Error('HTTP 401 Unauthorized'));
+    const { result } = renderHook(() => useWebSocket());
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    expect(MockWebSocket.instances.length).toBe(0);
+    expect(result.current.isConnected).toBe(false);
+    expect(result.current.error).toContain('Authentication required');
+  });
+
+  it('sends reset_tracker command over websocket', async () => {
+    const { result } = renderHook(() => useWebSocket());
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    const ws = MockWebSocket.instances[0];
+    ws.readyState = WebSocket.OPEN;
+
+    act(() => {
+      result.current.sendResetTracker();
+    });
+
+    expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'reset_tracker' }));
+  });
+
   it('cleans up on disconnect', async () => {
     const { result } = renderHook(() => useWebSocket());
 
     await act(async () => {
-      result.current.connect();
+      await result.current.connect();
     });
 
     act(() => {

@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -77,8 +78,23 @@ class ModelLoader:
         logger.info("Downloading model weights from %s to %s", url, destination)
 
         try:
-            response = requests.get(url, stream=True, timeout=60)
-            response.raise_for_status()
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = requests.get(url, stream=True, timeout=60)
+                    response.raise_for_status()
+                    break
+                except (requests.RequestException, requests.HTTPError) as net_err:
+                    if attempt == max_attempts:
+                        raise
+                    logger.warning(
+                        "Download attempt %d failed for %s: %s. Retrying in %ds...",
+                        attempt,
+                        url,
+                        net_err,
+                        attempt * 2,
+                    )
+                    time.sleep(attempt * 2)
 
             with open(temp_dest, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):

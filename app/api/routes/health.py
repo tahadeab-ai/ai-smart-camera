@@ -15,7 +15,7 @@ async def liveness() -> HealthResponse:
     """Kubernetes / Docker liveness probe: returns 200 if the process is responsive."""
     return HealthResponse(
         status="ok",
-        version="0.2.1",
+        version="0.2.2",
         timestamp=time.time(),
     )
 
@@ -30,6 +30,6 @@ async def readiness() -> HealthResponse:
         )
     return HealthResponse(
         status="ready",
-        version="0.2.1",
+        version="0.2.2",
         timestamp=time.time(),
     )

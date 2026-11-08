@@ -15,9 +15,10 @@ Click the badge in the project README or open:
 ### Execution Workflow
 1. Select **Runtime -> Run all** or step through the notebook sequentially.
 2. In Section 1, confirm hardware resources (GPU or CPU).
-3. In Section 7, the application launches with `demo.launch(share=True)`.
-4. A public URL formatted like `https://xxxx.gradio.live` will appear.
-5. Open the link on any desktop browser or mobile phone (iOS Safari / Android Chrome) to stream the camera feed.
+3. In Section 6, the React frontend is compiled via `npm ci && npm run build`.
+4. In Section 8-9, a secure session token is generated, Cloudflare Quick Tunnel is started to extract the public URL, and the FastAPI server is launched with exact CORS origin configuration.
+5. A public HTTPS URL formatted like `https://xxxx.trycloudflare.com` will appear.
+6. Open the link on any desktop browser or mobile phone (iOS Safari / Android Chrome) to stream the camera feed with real-time YOLO object detection.
 
 ---
 

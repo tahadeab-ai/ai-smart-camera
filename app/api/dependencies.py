@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import Header, HTTPException, Query, status
+from fastapi import Header, HTTPException, status
 
 from app.config import settings
 from app.services.camera_service import CameraService
@@ -30,17 +30,17 @@ def get_camera_service() -> CameraService:
 async def verify_access_token(
     x_access_token: Annotated[str | None, Header()] = None,
     authorization: Annotated[str | None, Header()] = None,
-    token: Annotated[str | None, Query()] = None,
 ) -> bool:
-    """Verifies optional access token for public Colab tunnels.
+    """Verifies optional access token via Authorization Bearer or X-Access-Token header.
 
     If settings.access_token is None or empty, access is public.
+    Query-string tokens are rejected to prevent leakage in server logs or browser history.
     """
     expected = settings.access_token
     if not expected:
         return True
 
-    provided = x_access_token or token
+    provided = x_access_token
     if not provided and authorization and authorization.startswith("Bearer "):
         provided = authorization[7:].strip()
 

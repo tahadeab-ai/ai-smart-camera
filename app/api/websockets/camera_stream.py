@@ -20,14 +20,22 @@ router = APIRouter(tags=["Stream"])
 def _is_origin_allowed(websocket: WebSocket) -> bool:
     """Verifies WebSocket handshake Origin header against configured CORS origins."""
     if "*" in settings.cors_origins:
+        # Wildcard origins are forbidden in authenticated public deployments
+        if settings.access_token:
+            logger.warning(
+                "WebSocket rejected: wildcard '*' CORS origin not allowed for authenticated deployments."
+            )
+            return False
         return True
 
     origin = websocket.headers.get("origin")
     if not origin:
-        # Direct non-browser clients (or same-origin where Origin header is omitted)
+        # Reject missing Origin headers by default for browser streaming
+        if not settings.allow_originless_ws:
+            logger.warning("WebSocket rejected: missing Origin header.")
+            return False
         return True
 
-    # Check origin or stripped protocol
     cleaned_origins = {o.rstrip("/") for o in settings.cors_origins}
     return origin.rstrip("/") in cleaned_origins
 
@@ -40,10 +48,12 @@ async def websocket_camera_stream(
 
     Protocol:
       1. Origin Check: Validates WebSocket Origin against settings.cors_origins.
-      2. Authentication: Validates single-use ?ticket= query param via ticket_manager if access_token is configured.
+      2. Authentication: Strictly requires single-use ?ticket= query param via ticket_manager if access_token is configured.
+         Permanent tokens and query fallbacks are rejected.
       3. Concurrency: Atomically reserves a session slot before accepting handshake.
       4. Config (Text JSON): {"type": "config", "confidence_threshold": 0.25, ...}
       5. Frames (Binary): [4-byte uint32 frame_id] + [JPEG bytes] or raw JPEG bytes.
+         Enforces max_ws_frame_size_mb and JPEG magic bytes.
       6. Responses:
          - Text JSON metadata: {"type": "detection", "frame_id": ..., "fps": ..., "latency_ms": ...}
          - Binary annotated JPEG: [4-byte uint32 frame_id] + [JPEG bytes].
@@ -57,18 +67,13 @@ async def websocket_camera_stream(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    # 2. Validate single-use ticket if access token is required
+    # 2. Validate single-use ticket if access token is required (no permanent token fallback)
     if settings.access_token:
         ticket = websocket.query_params.get("ticket")
-        # Backwards compatibility check for query token (deprecated) or ticket
-        is_valid = ticket_manager.consume_ticket(ticket or "")
-        if not is_valid:
-            # Fallback check if user passed master token directly in development/test
-            master_token = websocket.query_params.get("token") or websocket.headers.get("x-access-token")
-            if master_token != settings.access_token:
-                logger.warning("WebSocket rejected: invalid or missing single-use ticket.")
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                return
+        if not ticket or not ticket_manager.consume_ticket(ticket):
+            logger.warning("WebSocket rejected: invalid, expired, or missing single-use ticket.")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
 
     session_id = str(uuid.uuid4())
 
@@ -119,9 +124,26 @@ async def websocket_camera_stream(
                             jpeg_quality=payload.get(
                                 "jpeg_quality", session.config.jpeg_quality
                             ),
+                            enable_tracking=payload.get(
+                                "enable_tracking", session.config.enable_tracking
+                            ),
+                            enable_trails=payload.get(
+                                "enable_trails", session.config.enable_trails
+                            ),
+                            trace_length=payload.get(
+                                "trace_length", session.config.trace_length
+                            ),
+                            target_fps=payload.get(
+                                "target_fps", session.config.target_fps
+                            ),
                         )
                         await websocket.send_text(
                             json.dumps({"type": "config_ack", "status": "ok"})
+                        )
+                    elif msg_type == "reset_tracker":
+                        session.reset_tracker()
+                        await websocket.send_text(
+                            json.dumps({"type": "reset_tracker_ack", "status": "ok"})
                         )
                     elif msg_type == "ping":
                         await websocket.send_text(json.dumps({"type": "pong"}))
@@ -137,6 +159,22 @@ async def websocket_camera_stream(
                 if not raw_bytes or len(raw_bytes) < 4:
                     continue
 
+                # Validate binary frame size against configured limit
+                max_frame_bytes = int(settings.max_ws_frame_size_mb * 1024 * 1024)
+                if len(raw_bytes) > max_frame_bytes:
+                    logger.warning(
+                        "WebSocket frame rejected: size %d bytes exceeds max_ws_frame_size_mb (%d MB).",
+                        len(raw_bytes),
+                        settings.max_ws_frame_size_mb,
+                    )
+                    await websocket.send_text(
+                        json.dumps({
+                            "type": "error",
+                            "message": f"Frame size ({len(raw_bytes)} bytes) exceeds maximum limit of {settings.max_ws_frame_size_mb} MB.",
+                        })
+                    )
+                    continue
+
                 # Determine if client included a 4-byte frame_id header
                 # Standard JPEG starts with 0xFF 0xD8
                 if raw_bytes[0] == 0xFF and raw_bytes[1] == 0xD8:
@@ -147,6 +185,18 @@ async def websocket_camera_stream(
                     # Unpack 4-byte big-endian frame_id
                     frame_id = struct.unpack("!I", raw_bytes[:4])[0]
                     frame_bytes = raw_bytes[4:]
+
+                # Validate JPEG signature of payload bytes
+                if len(frame_bytes) < 3 or frame_bytes[0] != 0xFF or frame_bytes[1] != 0xD8:
+                    logger.warning("WebSocket frame %d rejected: invalid JPEG magic bytes.", frame_id)
+                    await websocket.send_text(
+                        json.dumps({
+                            "type": "error",
+                            "frame_id": frame_id,
+                            "message": "Malformed binary frame: payload does not contain valid JPEG data.",
+                        })
+                    )
+                    continue
 
                 try:
                     # Non-blocking threadpool execution for CPU/GPU-bound frame processing
@@ -179,4 +229,5 @@ async def websocket_camera_stream(
     except Exception as e:
         logger.error("Unexpected WebSocket error on session %s: %s", session_id, e)
     finally:
+        session.reset_tracker()
         stream_manager.remove_session(session_id)

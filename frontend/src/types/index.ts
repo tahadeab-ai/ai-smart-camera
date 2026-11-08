@@ -6,11 +6,14 @@ export interface BoundingBox {
   confidence: number;
   class_id: number;
   class_name: string;
+  tracker_id?: number | null;
 }
 
 export interface DetectionStats {
   total_count: number;
   class_counts: Record<string, number>;
+  tracked_count?: number;
+  tracked_class_counts?: Record<string, number>;
 }
 
 export interface StreamMetadata {
@@ -31,6 +34,10 @@ export interface StreamConfig {
   skip_interval: number;
   return_annotated_frame: boolean;
   jpeg_quality: number;
+  enable_tracking?: boolean;
+  enable_trails?: boolean;
+  trace_length?: number;
+  target_fps?: number;
 }
 
 export interface ImageDetectionResponse {

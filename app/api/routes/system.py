@@ -8,11 +8,33 @@ import torch
 from fastapi import APIRouter, Depends
 
 from app.api.dependencies import get_camera_service, verify_access_token
-from app.api.schemas.system import SystemInfoResponse
+from app.api.schemas.system import SystemInfoResponse, VersionResponse
 from app.services.camera_service import CameraService
 from app.services.stream_manager import stream_manager
 
 router = APIRouter(prefix="/system", tags=["System"])
+
+
+@router.get("/version", response_model=VersionResponse)
+async def get_system_version() -> VersionResponse:
+    """Returns application version and git commit SHA."""
+    commit_sha = os.getenv("GIT_COMMIT_SHA", "unknown")
+    if commit_sha == "unknown":
+        try:
+            import subprocess
+
+            commit_sha = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True
+                ).strip()[:7]
+            )
+        except Exception:
+            commit_sha = "unknown"
+
+    return VersionResponse(
+        version="0.2.2",
+        commit_sha=commit_sha,
+    )
 
 
 @router.get(
