@@ -194,7 +194,7 @@ async def websocket_camera_stream(
                         )
 
                     elif msg_type == "reset_tracker":
-                        request_id = data.get("request_id")
+                        request_id = payload.get("request_id")
 
                         # 1. Drain pending unstarted input frames and unwritten outputs
                         _drain_queues()
