@@ -10,9 +10,7 @@ Measures individual latency stages across frame resolutions and model input size
 - Lock contention across concurrent streams
 """
 
-import io
 import json
-import os
 import platform
 import sys
 import time
@@ -23,7 +21,6 @@ import cv2
 import numpy as np
 import psutil
 import torch
-from PIL import Image
 
 # Ensure project root is in path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
