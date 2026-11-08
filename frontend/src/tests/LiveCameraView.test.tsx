@@ -53,14 +53,35 @@ describe('LiveCameraView Component', () => {
   });
 
   it('displays switch error banner if camera toggle fails', async () => {
+    // Mock getUserMedia: first call succeeds (to start camera), second call rejects (to simulate flip failure)
+    const mockGetUserMedia = vi
+      .fn()
+      .mockResolvedValueOnce({
+        getTracks: () => [{ stop: vi.fn() }],
+      })
+      .mockRejectedValueOnce(new DOMException('Camera hardware error', 'NotReadableError'));
+
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      value: {
+        getUserMedia: mockGetUserMedia,
+        enumerateDevices: vi.fn().mockResolvedValue([]),
+      },
+      configurable: true,
+      writable: true,
+    });
+
     render(<LiveCameraView />);
+
+    // Start stream first so camera becomes active
+    const startBtn = screen.getByText(/Start Stream/i);
+    await fireEvent.click(startBtn);
 
     // Trigger camera switch button
     const flipBtn = screen.getByLabelText(/Flip Camera/i);
     expect(flipBtn).toBeDefined();
     await fireEvent.click(flipBtn);
 
-    // If camera device acquisition fails, switch error is displayed
+    // If camera device acquisition fails during toggle, switch error is displayed
     const errorNotice = await screen.findByText(/Hardware camera switch failed/i);
     expect(errorNotice).toBeDefined();
   });

@@ -17,6 +17,12 @@ class MockWebSocket {
   constructor(url: string) {
     this.url = url;
     MockWebSocket.instances.push(this);
+    queueMicrotask(() => {
+      if (this.readyState === WebSocket.CONNECTING) {
+        this.readyState = WebSocket.OPEN;
+        if (this.onopen) this.onopen();
+      }
+    });
   }
 
   send = vi.fn();
