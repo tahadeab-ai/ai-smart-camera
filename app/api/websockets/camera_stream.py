@@ -142,6 +142,9 @@ async def websocket_camera_stream(
         auto_frame_id = 0
         while True:
             message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                logger.debug("WebSocket client disconnected in read loop.")
+                break
 
             # Handle text control messages
             if "text" in message:
