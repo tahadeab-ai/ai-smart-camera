@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2] - 2026-11-08
+
+### Security
+- **Strict Ticket-Only WebSocket Authentication**:
+  - Completely removed permanent master token fallback from WebSocket query parameters (`?token=...`) and headers.
+  - Required single-use, 30s TTL cryptographically secure tickets (`?ticket=...`).
+  - Removed query token parameter from REST authentication in `app/api/dependencies.py` to prevent token leakage in server logs.
+- **Strict WebSocket Origin Policy**:
+  - Forbidden wildcard (`*`) CORS origins in authenticated deployments.
+  - Enforced rejection of missing `Origin` headers by default (`allow_originless_ws: False`).
+  - Strict matching of client origins against configured `settings.cors_origins`.
+- **Pre-Decode Upload Protection & ASGI Body Limits**:
+  - Implemented ASGI-level `ContentSizeLimitMiddleware` rejecting oversized HTTP bodies (20MB default) before buffering.
+  - Added Pillow header inspection (`Image.open(io.BytesIO)`) validating dimensions and maximum pixel count (16,777,216 px) before allocating raster OpenCV decompression buffers.
+  - Validated magic bytes returning HTTP 415 for unsupported formats.
+- **WebSocket Frame Size Bounds**:
+  - Enforced `max_ws_frame_size_mb` (2MB limit) on binary frames and validated JPEG signatures (`\xff\xd8`) prior to inference.
+- **Bounded Rate Limiter Storage & Trusted Proxy Validation**:
+  - Added capacity bounds (`max_tracked_clients=10000`) with automatic stale key eviction and LRU pruning in `SlidingWindowRateLimiter`.
+  - Parsed `X-Forwarded-For` only when the direct connecting peer IP is in `settings.trusted_proxies`, preventing client IP spoofing.
+
+### Fixed
+- **Real Hardware Camera Switching (REL-01)**:
+  - Replaced state-only toggling with full 9-step asynchronous hardware transition in `useCamera.ts` and `LiveCameraView.tsx`.
+  - Cleanly pauses frame capture, stops old tracks, clears references, requests new constraints via `getUserMedia`, awaits video playback readiness, and resumes streaming.
+  - Added transition lock preventing race conditions on rapid repeated clicks.
+- **Benchmark Artifact Discrepancy Reconciliation**:
+  - Corrected standard deviation in documentation to match the authoritative empirical artifact (41.11 ms).
+  - Saved raw sample arrays in benchmark JSON files and added distinct 640x640 benchmark artifact (`benchmarks/results/colab_cpu_640x640.json`).
+  - Clarified distinction between pure model forward-pass FPS and end-to-end browser WebSocket streaming FPS.
+
+### Changed
+- **Deterministic Dependency Enforcement**:
+  - Removed conditional `npm install` fallbacks in `Dockerfile` and GitHub Actions CI; builds strictly fail if `package-lock.json` is missing.
+
+---
+
 ## [0.2.1] - 2026-11-08
 
 ### Added

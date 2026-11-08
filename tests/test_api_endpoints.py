@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -12,7 +13,7 @@ from app.api.app import app
 from app.api.dependencies import set_camera_service
 from app.config import settings
 from app.services.camera_service import CameraService
-from app.services.rate_limiter import image_rate_limiter, ticket_rate_limiter
+from app.services.rate_limiter import SlidingWindowRateLimiter, image_rate_limiter, ticket_rate_limiter
 from app.services.ticket_manager import ticket_manager
 
 
@@ -76,12 +77,12 @@ def client(mock_service):
 
 
 def test_health_live(client):
-    """GET /api/v1/health/live returns 200 and version 0.2.1."""
+    """GET /api/v1/health/live returns 200 and version 0.2.2."""
     response = client.get("/api/v1/health/live")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["version"] == "0.2.1"
+    assert data["version"] == "0.2.2"
     assert "timestamp" in data
 
 
@@ -148,14 +149,14 @@ def test_detect_image_endpoint(client, mock_service):
     assert data["latency_ms"] == 15.4
 
 
-def test_detect_image_invalid_magic_bytes(client, mock_service):
-    """POST /api/v1/detect/image with corrupt image header returns 400 INVALID_IMAGE_FORMAT."""
+def test_detect_image_invalid_magic_bytes_returns_415(client, mock_service):
+    """POST /api/v1/detect/image with unsupported file format returns 415 UNSUPPORTED_MEDIA_TYPE."""
     response = client.post(
         "/api/v1/detect/image",
         files={"file": ("corrupt.txt", b"not an image with valid magic bytes", "text/plain")},
     )
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "INVALID_IMAGE_FORMAT"
+    assert response.status_code == 415
+    assert response.json()["error"]["code"] == "UNSUPPORTED_MEDIA_TYPE"
 
 
 def test_detect_image_dimensions_too_small(client, mock_service):
@@ -168,6 +169,22 @@ def test_detect_image_dimensions_too_small(client, mock_service):
     response = client.post(
         "/api/v1/detect/image",
         files={"file": ("tiny.jpg", buf, "image/jpeg")},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_IMAGE_DIMENSIONS"
+
+
+def test_detect_image_dimensions_too_large(client, mock_service):
+    """POST /api/v1/detect/image with excessive dimension returns 400 INVALID_IMAGE_DIMENSIONS."""
+    # Create image exceeding MAX_DIMENSION (4096)
+    img = Image.new("RGB", (4200, 50), color="yellow")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    buf.seek(0)
+
+    response = client.post(
+        "/api/v1/detect/image",
+        files={"file": ("wide.jpg", buf, "image/jpeg")},
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "INVALID_IMAGE_DIMENSIONS"
@@ -219,7 +236,11 @@ def test_ws_ticket_issuance(client, mock_service, monkeypatch):
     res_unauth = client.post("/api/v1/auth/ws-ticket")
     assert res_unauth.status_code == 401
 
-    # Authorized request
+    # Query string token is now rejected
+    res_query = client.post("/api/v1/auth/ws-ticket?token=test-token-123")
+    assert res_query.status_code == 401
+
+    # Authorized request with header
     res_auth = client.post(
         "/api/v1/auth/ws-ticket",
         headers={"X-Access-Token": "test-token-123"},
@@ -229,3 +250,47 @@ def test_ws_ticket_issuance(client, mock_service, monkeypatch):
     assert "ticket" in data
     assert len(data["ticket"]) >= 32
     assert data["expires_in"] == 30
+
+
+def test_rate_limiter_bounded_storage():
+    """SlidingWindowRateLimiter bounds client tracking to max_tracked_clients."""
+    limiter = SlidingWindowRateLimiter(requests_per_minute=5, window_seconds=60.0, max_tracked_clients=3)
+
+    # Helper mock request
+    def make_req(ip: str):
+        scope = {"type": "http", "client": (ip, 12345), "headers": []}
+        return Request(scope)
+
+    # Add 3 clients
+    limiter.check(make_req("1.1.1.1"))
+    limiter.check(make_req("2.2.2.2"))
+    limiter.check(make_req("3.3.3.3"))
+    assert len(limiter._history) == 3
+
+    # Adding a 4th client evicts the oldest entry to maintain bound <= 3
+    limiter.check(make_req("4.4.4.4"))
+    assert len(limiter._history) <= 3
+
+
+def test_trusted_proxy_handling(monkeypatch):
+    """SlidingWindowRateLimiter only trusts X-Forwarded-For if peer is in trusted_proxies."""
+    monkeypatch.setattr(settings, "trusted_proxies", ["127.0.0.1"])
+    limiter = SlidingWindowRateLimiter()
+
+    # Trusted peer (127.0.0.1) passing X-Forwarded-For -> client IP extracted
+    trusted_scope = {
+        "type": "http",
+        "client": ("127.0.0.1", 12345),
+        "headers": [(b"x-forwarded-for", b"203.0.113.195, 10.0.0.1")],
+    }
+    trusted_req = Request(trusted_scope)
+    assert limiter._get_client_key(trusted_req) == "203.0.113.195"
+
+    # Untrusted peer (198.51.100.2) passing spoofed X-Forwarded-For -> ignored, direct IP used
+    untrusted_scope = {
+        "type": "http",
+        "client": ("198.51.100.2", 12345),
+        "headers": [(b"x-forwarded-for", b"8.8.8.8")],
+    }
+    untrusted_req = Request(untrusted_scope)
+    assert limiter._get_client_key(untrusted_req) == "198.51.100.2"

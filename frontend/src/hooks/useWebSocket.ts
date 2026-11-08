@@ -42,20 +42,19 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
     setError(null);
 
-    // Acquire single-use ticket if possible
+    // Acquire single-use ticket (permanent tokens are strictly forbidden in WebSocket query URLs)
     let ticket: string | null = null;
     try {
       const ticketRes = await ApiClient.getWsTicket();
       ticket = ticketRes.ticket;
     } catch (err: unknown) {
-      // If server does not require tickets or auth failed
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('401') || msg.includes('Unauthorized')) {
-        setError('Authentication required: invalid or missing token.');
-        return;
+        setError('Authentication required: invalid or missing access token.');
+        return; // A failed ticket request must stop the connection attempt
       }
-      // If endpoint not requiring auth or server doesn't use tickets
-      logger: console.debug('Proceeding without ticket:', msg);
+      // If public mode (auth disabled on server), ticket request returns 200 or 404/ignored
+      console.debug('Connecting in public mode without ticket:', msg);
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -63,11 +62,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     const url = new URL(`${protocol}//${host}/api/v1/stream`);
     if (ticket) {
       url.searchParams.set('ticket', ticket);
-    } else {
-      const token = ApiClient.getToken();
-      if (token) {
-        url.searchParams.set('token', token);
-      }
     }
 
     try {

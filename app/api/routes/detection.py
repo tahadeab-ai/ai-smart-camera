@@ -1,11 +1,13 @@
 """Static image detection API endpoint with robust security and bounding checks."""
 
 import base64
+import io
 import logging
 
 import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from PIL import Image, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import get_camera_service, verify_access_token
@@ -29,7 +31,11 @@ WEBP_MAGIC = b"WEBP"
 
 MIN_DIMENSION = 10
 MAX_DIMENSION = 4096
+MAX_PIXELS = 16_777_216  # 4096 * 4096
 STREAM_CHUNK_SIZE = 64 * 1024  # 64 KB chunks
+
+# Set Pillow decompression bomb threshold
+Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 
 
 def validate_image_magic(data: bytes) -> str:
@@ -50,9 +56,9 @@ def validate_image_magic(data: bytes) -> str:
         return "webp"
 
     raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
+        status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
         detail={
-            "code": "INVALID_IMAGE_FORMAT",
+            "code": "UNSUPPORTED_MEDIA_TYPE",
             "message": "Unsupported image format. Allowed formats are JPEG, PNG, and WebP.",
         },
     )
@@ -66,18 +72,47 @@ def _sync_decode_and_infer(
     parsed_classes: list[str] | None,
 ) -> tuple[str, list[dict], dict, float, int, int]:
     """Synchronous CPU/GPU-bound image decoding, inference, and annotation."""
-    np_arr = np.frombuffer(content, np.uint8)
-    bgr_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-    if bgr_image is None:
+    # 1. Inspect image dimensions and metadata with Pillow BEFORE raster decoding
+    try:
+        with Image.open(io.BytesIO(content)) as pil_img:
+            format_name = pil_img.format
+            if format_name not in ("JPEG", "PNG", "WEBP"):
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail={
+                        "code": "UNSUPPORTED_MEDIA_TYPE",
+                        "message": f"Unsupported image format: {format_name}. Allowed formats are JPEG, PNG, and WebP.",
+                    },
+                )
+            w, h = pil_img.size
+    except HTTPException:
+        raise
+    except Image.DecompressionBombError as dbe:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "DECOMPRESSION_BOMB_DETECTED",
+                "message": "Image exceeds maximum allowed pixel count (decompression bomb protection).",
+            },
+        ) from dbe
+    except (UnidentifiedImageError, ValueError) as err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "code": "INVALID_IMAGE",
-                "message": "Could not decode uploaded file as an image.",
+                "message": "Corrupted or unreadable image file.",
             },
-        )
+        ) from err
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_IMAGE",
+                "message": "Could not parse image header.",
+            },
+        ) from exc
 
-    h, w = bgr_image.shape[:2]
+    # 2. Check dimension and pixel boundaries before raster allocation
     if w < MIN_DIMENSION or h < MIN_DIMENSION:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -86,12 +121,24 @@ def _sync_decode_and_infer(
                 "message": f"Image dimensions too small ({w}x{h}). Minimum supported is {MIN_DIMENSION}x{MIN_DIMENSION}.",
             },
         )
-    if w > MAX_DIMENSION or h > MAX_DIMENSION:
+    if w > MAX_DIMENSION or h > MAX_DIMENSION or (w * h) > MAX_PIXELS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "code": "INVALID_IMAGE_DIMENSIONS",
-                "message": f"Image dimensions too large ({w}x{h}). Maximum supported is {MAX_DIMENSION}x{MAX_DIMENSION}.",
+                "message": f"Image dimensions ({w}x{h}, {w * h} pixels) exceed maximum allowed size of {MAX_DIMENSION}x{MAX_DIMENSION} ({MAX_PIXELS} pixels).",
+            },
+        )
+
+    # 3. Decode raster image using OpenCV
+    np_arr = np.frombuffer(content, np.uint8)
+    bgr_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if bgr_image is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_IMAGE",
+                "message": "Could not decode uploaded file as an image.",
             },
         )
 

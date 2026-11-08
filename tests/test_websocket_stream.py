@@ -19,6 +19,8 @@ from app.services.camera_service import CameraService
 from app.services.stream_manager import stream_manager
 from app.services.ticket_manager import ticket_manager
 
+VALID_ORIGIN = "http://localhost:7860"
+
 
 @pytest.fixture(autouse=True)
 def reset_state():
@@ -99,7 +101,9 @@ def test_websocket_stream_flow(mock_ws_service):
     """Tests the full WebSocket streaming protocol with decomposed metrics."""
     client = TestClient(app)
 
-    with client.websocket_connect("/api/v1/stream") as ws:
+    with client.websocket_connect(
+        "/api/v1/stream", headers={"Origin": VALID_ORIGIN}
+    ) as ws:
         # 1. Send client config
         config_payload = {
             "type": "config",
@@ -147,14 +151,45 @@ def test_websocket_ticket_single_use(mock_ws_service, monkeypatch):
     ticket = ticket_manager.create_ticket(client_id="test-client")
 
     # First connection with ticket succeeds
-    with client.websocket_connect(f"/api/v1/stream?ticket={ticket}") as ws:
+    with client.websocket_connect(
+        f"/api/v1/stream?ticket={ticket}", headers={"Origin": VALID_ORIGIN}
+    ) as ws:
         ws.send_text(json.dumps({"type": "ping"}))
         pong = json.loads(ws.receive_text())
         assert pong["type"] == "pong"
 
     # Second connection reusing the same ticket must be rejected with 1008
     with pytest.raises(WebSocketDisconnect) as excinfo:
-        with client.websocket_connect(f"/api/v1/stream?ticket={ticket}"):
+        with client.websocket_connect(
+            f"/api/v1/stream?ticket={ticket}", headers={"Origin": VALID_ORIGIN}
+        ):
+            pass
+    assert excinfo.value.code == 1008
+
+
+def test_websocket_rejects_permanent_token(mock_ws_service, monkeypatch):
+    """Tests that passing permanent master token directly in query string is strictly rejected."""
+    monkeypatch.setattr(settings, "access_token", "master-secret")
+    client = TestClient(app)
+
+    # Attempt connecting with permanent token instead of ticket
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(
+            "/api/v1/stream?token=master-secret", headers={"Origin": VALID_ORIGIN}
+        ):
+            pass
+    assert excinfo.value.code == 1008
+
+
+def test_websocket_rejects_invalid_ticket(mock_ws_service, monkeypatch):
+    """Tests that an invalid or fabricated ticket is rejected with 1008."""
+    monkeypatch.setattr(settings, "access_token", "master-secret")
+    client = TestClient(app)
+
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(
+            "/api/v1/stream?ticket=invalid-bogus-ticket", headers={"Origin": VALID_ORIGIN}
+        ):
             pass
     assert excinfo.value.code == 1008
 
@@ -170,7 +205,9 @@ def test_websocket_expired_ticket_rejection(mock_ws_service, monkeypatch):
         ticket_manager._tickets[ticket].expires_at = time.time() - 10.0
 
     with pytest.raises(WebSocketDisconnect) as excinfo:
-        with client.websocket_connect(f"/api/v1/stream?ticket={ticket}"):
+        with client.websocket_connect(
+            f"/api/v1/stream?ticket={ticket}", headers={"Origin": VALID_ORIGIN}
+        ):
             pass
     assert excinfo.value.code == 1008
 
@@ -197,15 +234,78 @@ def test_websocket_origin_validation(mock_ws_service, monkeypatch):
         assert pong["type"] == "pong"
 
 
+def test_websocket_rejects_missing_origin_by_default(mock_ws_service, monkeypatch):
+    """Tests that connections without Origin header are rejected when allow_originless_ws=False."""
+    monkeypatch.setattr(settings, "allow_originless_ws", False)
+    client = TestClient(app)
+
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect("/api/v1/stream"):
+            pass
+    assert excinfo.value.code == 1008
+
+
+def test_websocket_rejects_wildcard_in_authenticated_deployment(mock_ws_service, monkeypatch):
+    """Tests that wildcard '*' origin is rejected if access_token is set."""
+    monkeypatch.setattr(settings, "access_token", "secret123")
+    monkeypatch.setattr(settings, "cors_origins", ["*"])
+    client = TestClient(app)
+
+    ticket = ticket_manager.create_ticket(client_id="test")
+
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(
+            f"/api/v1/stream?ticket={ticket}", headers={"Origin": "http://anything.com"}
+        ):
+            pass
+    assert excinfo.value.code == 1008
+
+
+def test_websocket_frame_size_limit(mock_ws_service, monkeypatch):
+    """Tests that binary frames exceeding max_ws_frame_size_mb return an error."""
+    # Set limit to 0.001 MB (~1KB)
+    monkeypatch.setattr(settings, "max_ws_frame_size_mb", 0.001)
+    client = TestClient(app)
+
+    with client.websocket_connect(
+        "/api/v1/stream", headers={"Origin": VALID_ORIGIN}
+    ) as ws:
+        oversized_bytes = b"\xff\xd8" + b"A" * 2000
+        ws.send_bytes(oversized_bytes)
+        resp_text = ws.receive_text()
+        resp = json.loads(resp_text)
+        assert resp["type"] == "error"
+        assert "exceeds" in resp["message"]
+
+
+def test_websocket_rejects_non_jpeg_frame(mock_ws_service):
+    """Tests that binary frames with invalid JPEG signatures are rejected."""
+    client = TestClient(app)
+
+    with client.websocket_connect(
+        "/api/v1/stream", headers={"Origin": VALID_ORIGIN}
+    ) as ws:
+        invalid_bytes = struct.pack("!I", 1) + b"GIF89aNOTAJPEG"
+        ws.send_bytes(invalid_bytes)
+        resp_text = ws.receive_text()
+        resp = json.loads(resp_text)
+        assert resp["type"] == "error"
+        assert "JPEG" in resp["message"]
+
+
 def test_websocket_concurrency_limit_exceeded(mock_ws_service, monkeypatch):
     """Tests that exceeding max_concurrent_streams rejects incoming connection with 1013."""
     monkeypatch.setattr(settings, "max_concurrent_streams", 1)
     monkeypatch.setattr(stream_manager, "max_concurrent", 1)
     client = TestClient(app)
 
-    with client.websocket_connect("/api/v1/stream"):
+    with client.websocket_connect(
+        "/api/v1/stream", headers={"Origin": VALID_ORIGIN}
+    ):
         # Second simultaneous connection exceeds limit of 1
         with pytest.raises(WebSocketDisconnect) as excinfo:
-            with client.websocket_connect("/api/v1/stream"):
+            with client.websocket_connect(
+                "/api/v1/stream", headers={"Origin": VALID_ORIGIN}
+            ):
                 pass
         assert excinfo.value.code == 1013

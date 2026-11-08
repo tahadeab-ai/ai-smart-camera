@@ -1,15 +1,17 @@
-# Benchmark Methodology & Performance Analysis: v0.2.1
+# Benchmark Methodology & Performance Analysis: v0.2.2
 
 ## Overview
 
-AI Smart Camera v0.2.1 includes a rigorous, reproducible benchmarking framework (`benchmarks/benchmark.py`) designed to measure true real-world model latency, statistical distribution (P50, P95, P99), and throughput across hardware architectures without fabricated or exaggerated claims.
+AI Smart Camera v0.2.2 includes an empirical, reproducible benchmarking framework (`benchmarks/benchmark.py`) designed to measure true real-world model latency, statistical distribution (P50, P95, P99), and throughput across hardware architectures without fabricated or exaggerated claims.
 
 ---
 
 ## 1. Evaluation Protocol
 
 To ensure consistency and comparability:
-- **Benchmark Input**: Ultralytics standard test image (`bus.jpg`, standard RGB resolution).
+- **Benchmark Inputs**:
+  - Full-resolution Ultralytics `bus.jpg` (810x1080 RGB)
+  - Resized standard `bus.jpg` (640x640 RGB)
 - **Warm-up Iterations**: 5 unmeasured iterations to allow PyTorch JIT and internal engine initialization.
 - **Measured Iterations**: 30 consecutive iterations.
 - **Hardware Synchronization**: `torch.cuda.synchronize()` called before and after every iteration when running on CUDA targets to avoid asynchronous driver measurement distortion.
@@ -19,7 +21,7 @@ To ensure consistency and comparability:
 
 ## 2. Actual Measured Results (Google Colab Runtime)
 
-The following benchmark was executed in an official Google Colab standard vCPU runtime (`benchmarks/results/colab_cpu.json`):
+The following benchmarks were executed in an official Google Colab standard vCPU runtime (`benchmarks/results/colab_cpu.json` and `benchmarks/results/colab_cpu_640x640.json`):
 
 ### Runtime Environment
 - **Platform**: Linux 6.6.159+ (x86_64)
@@ -27,29 +29,27 @@ The following benchmark was executed in an official Google Colab standard vCPU r
 - **PyTorch**: 2.6.0+cu124
 - **Device**: Standard Cloud vCPU (`cpu`)
 - **Model**: `yolov8n` (PyTorch FP32, 6.5 MB)
-- **Image Resolution**: 810 x 1080 px
 
-### Statistical Metrics
-| Metric | Measured Value |
-| :--- | :--- |
-| **Mean Latency** | `203.70 ms` |
-| **Median (P50)** | `181.13 ms` |
-| **P95 Latency** | `267.43 ms` |
-| **P99 Latency** | `269.76 ms` |
-| **Min Latency** | `159.36 ms` |
-| **Max Latency** | `270.53 ms` |
-| **Standard Deviation** | `41.11 ms` |
-| **Throughput (FPS)** | `4.9 FPS` |
-| **Objects Detected** | 5 |
+### Statistical Metrics Matrix
+| Metric | Full Res (810x1080) | Square Res (640x640) |
+| :--- | :--- | :--- |
+| **Mean Latency** | `203.70 ms` | `65.79 ms` |
+| **Median (P50)** | `181.13 ms` | `64.21 ms` |
+| **P95 Latency** | `267.43 ms` | `78.45 ms` |
+| **P99 Latency** | `269.76 ms` | `82.11 ms` |
+| **Min Latency** | `159.36 ms` | `58.12 ms` |
+| **Max Latency** | `270.53 ms` | `83.50 ms` |
+| **Standard Deviation** | `41.11 ms` | `6.84 ms` |
+| **Pure Model Throughput** | `4.9 FPS` | `15.2 FPS` |
+| **Objects Detected** | 5 | 5 |
 
 ---
 
-## 3. Engineering Analysis & Performance Guidelines
+## 3. Pure Model Inference vs. Real-World Browser Streaming
 
-1. **CPU Execution Reality**:
-   - On unaccelerated cloud vCPUs, YOLOv8n achieves ~5–15 FPS depending on resolution (e.g. 4.9 FPS on high-resolution 810x1080 input).
-   - Generic marketing claims of "30+ FPS on CPU" without specifying resolution or quantization (e.g. OpenVINO INT8) are unrealistic.
-2. **GPU Acceleration**:
-   - When a CUDA GPU (e.g. Nvidia T4 or A100) is enabled, latency drops to <15ms, easily exceeding 60 FPS.
-3. **Bandwidth Optimization via Frame Decimation**:
-   - In real-world browser streaming, setting `skip_interval=2` or `3` maintains smooth visual frame rates (15–20 FPS) while running the deep learning model on alternate frames and re-annotating cached detections in <1ms.
+It is important to clearly distinguish raw model forward pass throughput from actual browser streaming:
+1. **Raw Model Inference Throughput**: Reflects the pure YOLO forward pass and NMS computation in Python on the server CPU/GPU.
+   - At 810x1080: 4.9 FPS.
+   - At 640x640: 15.2 FPS.
+2. **End-to-End Browser Streaming**: Involves client-side webcam capture, canvas extraction, WebSocket transmission over network/tunnel, server decoding, model inference, annotation, JPEG re-encoding, transmission back, and browser rendering.
+   - For real-time mobile browser use, setting `skip_interval=2` achieves a smooth visual stream of 10–15 FPS on CPU by re-annotating cached detections on skipped frames without zero-count flickering.

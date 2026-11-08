@@ -42,6 +42,7 @@ export const LiveCameraView: React.FC = () => {
   const {
     videoRef,
     isActive: isCameraActive,
+    isTransitioning: isCameraTransitioning,
     facingMode,
     error: cameraError,
     startCamera,
@@ -231,11 +232,12 @@ export const LiveCameraView: React.FC = () => {
 
             <button
               onClick={toggleFacingMode}
+              disabled={isCameraTransitioning}
               title="Switch Front/Rear Camera (Mobile)"
-              className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-3 px-4 rounded-xl transition"
+              className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 border border-slate-700 py-3 px-4 rounded-xl transition"
             >
-              <SwitchCamera className="w-5 h-5 text-sky-400" />
-              <span className="hidden sm:inline">Flip Camera</span>
+              <SwitchCamera className={`w-5 h-5 text-sky-400 ${isCameraTransitioning ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{isCameraTransitioning ? 'Switching...' : 'Flip Camera'}</span>
             </button>
           </div>
         </div>

@@ -15,18 +15,18 @@
 
 ## 1. Project Introduction
 
-**AI Smart Camera v0.2.1** is an enterprise-grade, edge-ready Computer Vision web application delivering real-time object detection, classification, annotation, and counting. 
+**AI Smart Camera v0.2.2** is an enterprise-grade, edge-ready Computer Vision web application delivering real-time object detection, classification, annotation, and counting. 
 
-Engineered with a **FastAPI backend**, an interactive **React 18 + TypeScript + Vite frontend**, and a low-latency **WebSocket streaming protocol**, the application runs edge computer vision models directly in any browser—supporting mobile phone cameras (with rear/front lens switching) and desktop webcams over public HTTPS tunnels without installing local dependencies.
+Engineered with a **FastAPI backend**, an interactive **React 18 + TypeScript + Vite frontend**, and a low-latency **WebSocket streaming protocol**, the application runs edge computer vision models directly in any browser—supporting mobile phone cameras (with rear/front lens hardware switching) and desktop webcams over public HTTPS tunnels without installing local dependencies.
 
-### v0.2.1 Hardening & Reliability Upgrades
-- 🔒 **Defense-in-Depth File Ingestion**: Early `Content-Length` checks, 64KB bounded chunk streaming up to 20MB, magic byte enforcement, and 4096x4096px bounds preventing decompression bombs.
-- 🎫 **WebSocket Single-Use Tickets**: Master tokens are never leaked in WebSocket handshake URLs; single-use 32-byte cryptographic tickets are issued via `POST /api/v1/auth/ws-ticket` (30s TTL).
-- 🛡️ **WebSocket Origin Validation**: Handshakes validated against permitted CORS origins to eliminate Cross-Site WebSocket Hijacking.
-- ⚡ **Non-Blocking Threadpool Vision**: CPU/GPU-bound image decoding, YOLO inference, and annotation offloaded from the asyncio loop via `run_in_threadpool`, keeping health checks responsive under heavy inference.
-- ⏱️ **Atomic Concurrency Controls**: Lock-guarded slot reservations in `StreamManager` preventing race conditions during simultaneous handshakes.
-- 🎛️ **Rate Limiting**: Sliding window token bucket limiter (10 req/min) on image detection and ticket issuance.
-- 📦 **Deterministic Builds**: Pinned python packages in `requirements.txt` and verified `frontend/package-lock.json` for `npm ci`.
+### v0.2.2 Security & Correctness Upgrades
+- 🔒 **Strict Ticket-Only WebSocket Auth**: Permanent token query parameter fallback completely eliminated; single-use, 30s TTL cryptographically secure tickets required.
+- 🛡️ **Strict WebSocket Origin Policy**: Wildcard CORS origins rejected for authenticated deployments; Origin headers strictly enforced by default.
+- 📸 **Real Hardware Camera Switching**: Full 9-step asynchronous hardware transition in `useCamera`, pausing frames, cleanly terminating old tracks, clearing references, acquiring new stream, and waiting for video readiness.
+- 🛑 **ASGI Body Limits & Pre-Decode Pillow Inspection**: Early ASGI-level body rejection (20MB) and Pillow header inspection verifying image dimensions and pixel count (<= 16MP) before allocating raster OpenCV buffers.
+- ⏱️ **WebSocket Frame Size Bounds**: Maximum WebSocket frame size enforced (2MB) with JPEG magic byte validation prior to inference.
+- 🎛️ **Rate Limiter Memory Bounds & Trusted Proxy**: Bounded storage capacity (`max_tracked_clients=10000`) with stale entry eviction; `X-Forwarded-For` parsed only from configured `trusted_proxies`.
+- 📦 **Strict Dependency Locking**: Enforced `npm ci` without unpinned fallbacks in Docker and CI workflows.
 
 ---
 
@@ -131,10 +131,10 @@ Deploy the single-origin containerized microservice:
 
 ```bash
 # Build multi-stage image
-docker build -t ai-smart-camera:0.2.1 .
+docker build -t ai-smart-camera:0.2.2 .
 
 # Run container
-docker run -d -p 7860:7860 --name ai-smart-camera ai-smart-camera:0.2.1
+docker run -d -p 7860:7860 --name ai-smart-camera ai-smart-camera:0.2.2
 
 # Verify health
 curl http://localhost:7860/api/v1/health/live

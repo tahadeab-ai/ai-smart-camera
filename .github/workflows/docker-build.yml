@@ -2,7 +2,7 @@ name: Docker - Build & Runtime Verification
 
 on:
   push:
-    branches: [main, "hardening/**"]
+    branches: [main, "hardening/**", "fix/**"]
   pull_request:
     branches: [main]
 
@@ -20,7 +20,7 @@ jobs:
 
       - name: Build Multi-Stage Docker Image
         run: |
-          docker build -t ai-smart-camera:0.2.1 .
+          docker build -t ai-smart-camera:0.2.2 .
 
       - name: Start Container in Background
         run: |
@@ -32,7 +32,7 @@ jobs:
             -e MODEL_NAME=yolov8n \
             -e DEVICE=cpu \
             -e LOG_LEVEL=DEBUG \
-            ai-smart-camera:0.2.1
+            ai-smart-camera:0.2.2
 
       - name: Await Service Readiness
         run: |
