@@ -41,53 +41,68 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   }, []);
 
   // Internal connection executor
-  const executeConnect = useCallback(async () => {
-    if (
-      wsRef.current &&
-      (wsRef.current.readyState === WebSocket.OPEN ||
-        wsRef.current.readyState === WebSocket.CONNECTING)
-    ) {
-      return;
+  const executeConnect = useCallback((): Promise<boolean> => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      return Promise.resolve(true);
     }
 
     setError(null);
 
-    // Acquire single-use ticket (permanent tokens are strictly forbidden in WebSocket query URLs)
-    let ticket: string | null = null;
-    try {
-      const ticketRes = await ApiClient.getWsTicket();
-      ticket = ticketRes.ticket;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('Authentication')) {
-        setError('Authentication required: invalid or missing access token.');
-        return; // A failed ticket request must stop the connection attempt
-      }
-      // If public mode (auth disabled on server), ticket request returns 200 or 404/ignored
-      console.debug('Connecting in public mode without ticket:', msg);
-    }
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const url = new URL(`${protocol}//${host}/api/v1/stream`);
-    if (ticket) {
-      url.searchParams.set('ticket', ticket);
-    }
-
-    try {
-      const ws = new WebSocket(url.toString());
-      ws.binaryType = 'arraybuffer';
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setIsConnected(true);
-        setError(null);
-        reconnectAttemptsRef.current = 0; // Reset backoff counter on success
-
-        if (config) {
-          ws.send(JSON.stringify({ type: 'config', ...config }));
+    return new Promise<boolean>(async (resolve) => {
+      let isSettled = false;
+      const settle = (success: boolean) => {
+        if (!isSettled) {
+          isSettled = true;
+          resolve(success);
         }
       };
+
+      // Acquire single-use ticket (permanent tokens are strictly forbidden in WebSocket query URLs)
+      let ticket: string | null = null;
+      try {
+        const ticketRes = await ApiClient.getWsTicket();
+        ticket = ticketRes.ticket;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('Authentication')) {
+          setError('Authentication required: invalid or missing access token.');
+          settle(false);
+          return; // A failed ticket request must stop the connection attempt
+        }
+        // If public mode (auth disabled on server), ticket request returns 200 or 404/ignored
+        console.debug('Connecting in public mode without ticket:', msg);
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      const url = new URL(`${protocol}//${host}/api/v1/stream`);
+      if (ticket) {
+        url.searchParams.set('ticket', ticket);
+      }
+
+      try {
+        const ws = new WebSocket(url.toString());
+        ws.binaryType = 'arraybuffer';
+        wsRef.current = ws;
+
+        const connectionTimeout = window.setTimeout(() => {
+          if (!isSettled && ws.readyState !== WebSocket.OPEN) {
+            console.warn('WebSocket connection attempt timed out.');
+            settle(false);
+          }
+        }, 8000);
+
+        ws.onopen = () => {
+          clearTimeout(connectionTimeout);
+          setIsConnected(true);
+          setError(null);
+          reconnectAttemptsRef.current = 0; // Reset backoff counter on success
+
+          if (config) {
+            ws.send(JSON.stringify({ type: 'config', ...config }));
+          }
+          settle(true);
+        };
 
       ws.onmessage = (event: MessageEvent) => {
         if (typeof event.data === 'string') {
@@ -103,16 +118,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
                 pendingResetRequestsRef.current.delete(reqId);
                 console.debug(`Backend tracker reset confirmed for request ${reqId}`);
                 entry.resolve(true);
-              } else if (!reqId && pendingResetRequestsRef.current.size > 0) {
-                // Fallback for un-tagged ack (e.g. legacy backend)
-                const firstEntry = pendingResetRequestsRef.current.entries().next().value;
-                if (firstEntry) {
-                  const [firstId, entry] = firstEntry;
-                  clearTimeout(entry.timer);
-                  pendingResetRequestsRef.current.delete(firstId);
-                  console.debug(`Backend tracker reset confirmed for un-tagged request ${firstId}`);
-                  entry.resolve(true);
-                }
+              } else if (!reqId) {
+                // Explicitly ignore untagged ack; strict request correlation required
+                console.warn('Received untagged reset_tracker_ack; ignoring.');
               }
             }
           } catch (e) {
@@ -135,16 +143,19 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       };
 
       ws.onclose = (event) => {
+        clearTimeout(connectionTimeout);
         setIsConnected(false);
         cleanupLastObjectUrl();
 
         // Cancel any pending tracker reset promises on socket close
         const pending = pendingResetRequestsRef.current;
         pendingResetRequestsRef.current = new Map();
-        pending.forEach(({ resolve, timer }) => {
+        pending.forEach(({ resolve: resResolve, timer }) => {
           clearTimeout(timer);
-          resolve(false);
+          resResolve(false);
         });
+
+        settle(false);
 
         if (event.code === 1008) {
           setError('Authentication failed: Invalid access token or ticket.');
@@ -183,22 +194,26 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       };
 
       ws.onerror = () => {
+        clearTimeout(connectionTimeout);
         setError('WebSocket connection error.');
+        settle(false);
       };
     } catch (err: unknown) {
       setError(`WebSocket initialization error: ${err}`);
+      settle(false);
     }
+  });
   }, [cleanupLastObjectUrl, config, onAnnotatedFrame, onMetadata]);
 
   // Connect initiating user action
-  const connect = useCallback(() => {
+  const connect = useCallback((): Promise<boolean> => {
     isManualDisconnectRef.current = false;
     reconnectAttemptsRef.current = 0;
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
-    executeConnect();
+    return executeConnect();
   }, [executeConnect]);
 
   // Disconnect WebSocket and cancel pending reconnects

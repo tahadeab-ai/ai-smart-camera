@@ -192,7 +192,7 @@ export const SessionAnalyticsView: React.FC<SessionAnalyticsViewProps> = ({
               {avgFps.toFixed(1)} <span className="text-xs text-slate-400 font-normal">FPS</span>
             </div>
             <div className="text-[11px] text-slate-500 mt-1">
-              Browser painted frame rate
+              Browser image load / decode rate (rolling 5s)
             </div>
           </div>
 

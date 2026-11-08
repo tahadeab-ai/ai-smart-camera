@@ -51,4 +51,17 @@ describe('LiveCameraView Component', () => {
     // Camera fails -> stream not active
     expect(screen.getByText(/Camera Feed Ready/i)).toBeDefined();
   });
+
+  it('displays switch error banner if camera toggle fails', async () => {
+    render(<LiveCameraView />);
+
+    // Trigger camera switch button
+    const flipBtn = screen.getByLabelText(/Flip Camera/i);
+    expect(flipBtn).toBeDefined();
+    await fireEvent.click(flipBtn);
+
+    // If camera device acquisition fails, switch error is displayed
+    const errorNotice = await screen.findByText(/Hardware camera switch failed/i);
+    expect(errorNotice).toBeDefined();
+  });
 });

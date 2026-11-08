@@ -51,6 +51,7 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
   const [fitMode, setFitMode] = useState<'contain' | 'cover'>('contain');
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [clientDropped, setClientDropped] = useState<number>(0);
+  const [switchError, setSwitchError] = useState<string | null>(null);
 
   // Telemetry state
   const [telemetry, setTelemetry] = useState<StreamMetadata>({
@@ -109,12 +110,15 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
     captureFrameJpeg,
   } = useCamera({ idealFacingMode: 'user' });
 
+  // Note: onLoad indicates the browser has decoded and loaded the JPEG payload into the <img> element;
+  // it measures the image load/decode event rather than a guaranteed hardware vsync compositor paint.
   const handleImagePainted = useCallback(() => {
     sessionStatsRef.current.displayed += 1;
     const now = performance.now();
     const timestamps = displayTimestampsRef.current;
     timestamps.push(now);
-    while (timestamps.length > 0 && timestamps[0] < now - 2000) {
+    // Retain timestamps across a rolling 5-second window for instantaneous render rate calculation
+    while (timestamps.length > 0 && timestamps[0] < now - 5000) {
       timestamps.shift();
     }
   }, []);
@@ -146,9 +150,14 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
       const avgLatency = stats.processed > 0 ? stats.latencySum / stats.processed : 0;
       const avgServerFps = stats.processed > 0 ? stats.fpsSum / stats.processed : 0;
 
-      const sessionDurationSec =
-        stats.startTime > 0 ? Math.max(1, (Date.now() - stats.startTime) / 1000) : 1;
-      const avgFps = stats.displayed / sessionDurationSec;
+      // Calculate instantaneous display render rate over a rolling 5-second window
+      const now = performance.now();
+      const rollingTimestamps = displayTimestampsRef.current.filter((t) => t >= now - 5000);
+      const rollingRenderFps =
+        rollingTimestamps.length > 1
+          ? (rollingTimestamps.length - 1) /
+            ((rollingTimestamps[rollingTimestamps.length - 1] - rollingTimestamps[0]) / 1000)
+          : 0;
 
       onTelemetryUpdate?.({
         totalFrames: stats.totalSent,
@@ -162,7 +171,7 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
         serverDroppedFrames: meta.dropped_frames ?? 0,
         clientDroppedFrames: totalClientDrops,
         avgLatencyMs: avgLatency,
-        avgFps: avgFps,
+        avgFps: rollingRenderFps,
         avgServerFps: avgServerFps,
         classDistribution: { ...stats.classDist },
         trackedCount: trackedCount,
@@ -350,6 +359,7 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
   const handleToggleFacingMode = async () => {
     if (isSwitchingCameraRef.current || isCameraTransitioning) return;
     isSwitchingCameraRef.current = true;
+    setSwitchError(null);
 
     try {
       // 1. Immediately drop any stale annotated frame so old results are never displayed
@@ -362,15 +372,32 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
         if (!ackSuccess) {
           console.warn('Tracker reset ACK timed out or failed during camera switch. Re-establishing clean stream session.');
           disconnectWs();
-          connectWs();
+          const reconnected = await connectWs();
+          if (!reconnected) {
+            setSwitchError('Failed to re-establish WebSocket connection after tracker reset timeout.');
+            stopCamera();
+            onStreamingStateChange?.(false);
+            return;
+          }
         }
       }
 
       // 3. Stop old tracks and acquire the new camera
       const switchSuccess = await toggleFacingMode();
       if (!switchSuccess) {
-        console.warn('Hardware camera switch failed; maintaining current stream state.');
+        console.error('Hardware camera switch failed; releasing resources.');
+        setSwitchError('Hardware camera switch failed: unable to acquire requested camera device.');
+        stopCamera();
+        disconnectWs();
+        onStreamingStateChange?.(false);
       }
+    } catch (err: unknown) {
+      console.error('Unexpected error during camera switch:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      setSwitchError(`Camera switch error: ${msg}`);
+      stopCamera();
+      disconnectWs();
+      onStreamingStateChange?.(false);
     } finally {
       // 4. Resume frame capture only after successful transition
       isSwitchingCameraRef.current = false;
@@ -476,10 +503,10 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
         </div>
 
         {/* Error Notices Toast */}
-        {(cameraError || wsError) && (
+        {(cameraError || wsError || switchError) && (
           <div className="absolute top-14 left-4 right-4 sm:left-auto sm:right-4 z-30 max-w-md p-3 bg-rose-950/90 border border-rose-600/40 rounded-xl text-rose-300 text-xs flex items-center space-x-2.5 backdrop-blur-md shadow-2xl animate-fade-in">
             <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-400" />
-            <span className="flex-1 font-medium">{cameraError || wsError}</span>
+            <span className="flex-1 font-medium">{switchError || cameraError || wsError}</span>
           </div>
         )}
       </div>

@@ -256,6 +256,55 @@ describe('useWebSocket', () => {
     vi.useRealTimers();
   });
 
+  it('ignores untagged reset_tracker_ack and keeps pending promise waiting', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useWebSocket());
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    const ws = MockWebSocket.instances[0];
+    ws.readyState = WebSocket.OPEN;
+
+    let p: Promise<boolean>;
+    act(() => {
+      p = result.current.sendResetTracker(1000);
+    });
+
+    let isResolved = false;
+    p!.then(() => {
+      isResolved = true;
+    });
+
+    // Deliver untagged ACK
+    await act(async () => {
+      if (ws.onmessage) {
+        ws.onmessage({
+          data: JSON.stringify({
+            type: 'reset_tracker_ack',
+            status: 'ok',
+            // No request_id provided
+          }),
+        });
+      }
+    });
+
+    // Untagged ACK must be ignored; promise must NOT resolve
+    expect(isResolved).toBe(false);
+
+    // Now advance time to trigger timeout
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+
+    const success = await p!;
+    expect(success).toBe(false);
+    expect(isResolved).toBe(true);
+
+    vi.useRealTimers();
+  });
+
   it('cancels all pending reset requests and resolves false on disconnect', async () => {
     const { result } = renderHook(() => useWebSocket());
 
