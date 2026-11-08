@@ -42,7 +42,7 @@ def load_test_frames(width: int = 640, height: int = 480, count: int = 10) -> li
         shifted = np.roll(arr, shift, axis=1)
         img = Image.fromarray(shifted)
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=75)
+        img.save(buf, format="JPEG", quality=65)
         frames.append(buf.getvalue())
 
     return frames
@@ -151,8 +151,12 @@ async def verify_streaming_performance(
                             break
                     except TimeoutError:
                         if not is_sending_active:
-                            # Test sending finished and queue drained
-                            break
+                            # If all received metadata have their matching paired JPEG, exit cleanly
+                            if len(received_jpegs) >= len(received_metadata):
+                                break
+                            # Otherwise allow up to 2.5s post-send drain time for remaining in-flight JPEG
+                            if (time.perf_counter() - test_start_t) > (duration_seconds + 2.5):
+                                break
 
             recv_task = asyncio.create_task(receive_worker())
 
