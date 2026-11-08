@@ -171,8 +171,8 @@ class StreamSession:
         rgb_frame = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
         skip = self.config.skip_interval
 
-        # Check frame decimation condition
-        is_skipped = skip > 1 and (self.frame_counter % skip != 0)
+        # Check frame decimation condition (frame 1 always runs full inference)
+        is_skipped = skip > 1 and self.frame_counter > 1 and ((self.frame_counter - 1) % skip != 0)
 
         if is_skipped:
             # Re-annotate incoming frame using cached detections in <1ms

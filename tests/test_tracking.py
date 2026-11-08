@@ -2,6 +2,7 @@
 
 import io
 import json
+import threading
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -40,9 +41,7 @@ def mock_tracking_service():
         service.annotator = MagicMock()
         service.annotator.annotate.side_effect = lambda scene, detections, **kwargs: scene
         service.counter = MagicMock()
-        service._lock = MagicMock()
-        service._lock.__enter__ = MagicMock()
-        service._lock.__exit__ = MagicMock()
+        service._lock = threading.Lock()
 
         # Default inference predict
         mock_engine = MagicMock()
@@ -54,25 +53,29 @@ def mock_tracking_service():
         service.detector.process_results.return_value = sv.Detections.empty()
 
         # Counter count mock
-        def _count(dets):
-            total = len(dets) if dets is not None else 0
+        def _count(detections=None, *args, **kwargs):
+            total = len(detections) if detections is not None else 0
             return {"total_count": total, "class_counts": {"person": total}}
         service.counter.count.side_effect = _count
 
         # _extract_boxes mock
-        def _extract(dets):
-            if dets is None or len(dets) == 0:
+        def _extract(detections=None, *args, **kwargs):
+            if detections is None or len(detections) == 0:
                 return []
             boxes = []
-            for i in range(len(dets)):
-                tid = int(dets.tracker_id[i]) if (dets.tracker_id is not None and len(dets.tracker_id) > i) else None
+            for i in range(len(detections)):
+                tid = (
+                    int(detections.tracker_id[i])
+                    if (hasattr(detections, "tracker_id") and detections.tracker_id is not None and len(detections.tracker_id) > i and detections.tracker_id[i] is not None)
+                    else None
+                )
                 boxes.append({
-                    "x1": float(dets.xyxy[i][0]),
-                    "y1": float(dets.xyxy[i][1]),
-                    "x2": float(dets.xyxy[i][2]),
-                    "y2": float(dets.xyxy[i][3]),
+                    "x1": float(detections.xyxy[i][0]),
+                    "y1": float(detections.xyxy[i][1]),
+                    "x2": float(detections.xyxy[i][2]),
+                    "y2": float(detections.xyxy[i][3]),
                     "class_name": "person",
-                    "confidence": float(dets.confidence[i]) if dets.confidence is not None else 1.0,
+                    "confidence": float(detections.confidence[i]) if detections.confidence is not None else 1.0,
                     "tracker_id": tid,
                 })
             return boxes
@@ -258,7 +261,7 @@ def test_empty_detection_frames_handling(mock_tracking_service):
 
 def test_websocket_reset_tracker_protocol(client):
     """Verify WebSocket protocol acknowledges reset_tracker message deterministically."""
-    ticket = ticket_manager.issue_ticket()
+    ticket = ticket_manager.create_ticket()
     with client.websocket_connect(
         f"/api/v1/stream?ticket={ticket}",
         headers={"Origin": "http://localhost:7860"},
