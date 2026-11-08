@@ -39,7 +39,7 @@ def main() -> None:
     service.detector = MagicMock()
     service.detector.class_names = {0: "person"}
     service.annotator = VisionAnnotator()
-    service.counter = ObjectCounter({0: "person"})
+    service.counter = ObjectCounter()
 
     def _extract(dets=None, *args, **kwargs):
         if dets is None or len(dets) == 0:
