@@ -11,8 +11,6 @@ import {
   Gauge,
   Maximize2,
   X,
-  Layers,
-  ChevronDown,
 } from 'lucide-react';
 import { useCamera } from '../hooks/useCamera';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -109,8 +107,9 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
       stats.latencySum += meta.latency_ms;
       stats.fpsSum += meta.fps;
 
-      if (meta.stats.tracked_count > stats.maxTracked) {
-        stats.maxTracked = meta.stats.tracked_count;
+      const trackedCount = meta.stats.tracked_count ?? 0;
+      if (trackedCount > stats.maxTracked) {
+        stats.maxTracked = trackedCount;
       }
 
       // Aggregate class counts
@@ -120,7 +119,7 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
         }
       }
 
-      const totalDropped = meta.dropped_frames + clientDropped;
+      const totalDropped = (meta.dropped_frames ?? 0) + clientDropped;
       const avgLatency = stats.processed > 0 ? stats.latencySum / stats.processed : 0;
       const avgFps = stats.processed > 0 ? stats.fpsSum / stats.processed : 0;
 
@@ -131,7 +130,7 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
         avgLatencyMs: avgLatency,
         avgFps: avgFps,
         classDistribution: { ...stats.classDist },
-        trackedCount: meta.stats.tracked_count,
+        trackedCount: trackedCount,
         maxConcurrentTracked: stats.maxTracked,
         startTime: stats.startTime,
       });
@@ -341,10 +340,10 @@ export const LiveCameraView: React.FC<LiveCameraViewProps> = ({
             frameId={telemetry.frame_id}
             fps={telemetry.fps}
             latencyMs={telemetry.latency_ms}
-            queueLatencyMs={telemetry.queue_latency_ms}
-            droppedFrames={telemetry.dropped_frames}
+            queueLatencyMs={telemetry.queue_latency_ms ?? 0}
+            droppedFrames={telemetry.dropped_frames ?? 0}
             clientDropped={clientDropped}
-            trackedCount={telemetry.stats.tracked_count}
+            trackedCount={telemetry.stats.tracked_count ?? 0}
             totalCount={telemetry.stats.total_count}
             classCounts={telemetry.stats.class_counts}
             fitMode={fitMode}

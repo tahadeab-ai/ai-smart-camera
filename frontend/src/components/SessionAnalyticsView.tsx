@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart3, Activity, Layers, Crosshair, ArrowDownCircle, RefreshCw } from 'lucide-react';
+import { Activity, Layers, Crosshair, ArrowDownCircle, RefreshCw } from 'lucide-react';
 import { SessionAnalyticsData } from '../types';
 
 interface SessionAnalyticsViewProps {
