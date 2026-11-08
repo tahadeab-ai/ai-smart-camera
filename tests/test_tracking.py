@@ -2,14 +2,19 @@
 
 import io
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 import supervision as sv
+from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.api.dependencies import get_camera_service
+from app.api.app import app
+from app.api.dependencies import set_camera_service
+from app.services.camera_service import CameraService
 from app.services.stream_manager import StreamConfig, StreamSession
+from app.services.ticket_manager import ticket_manager
 
 
 def _create_jpeg_bytes(width: int = 640, height: int = 480) -> bytes:
@@ -19,6 +24,69 @@ def _create_jpeg_bytes(width: int = 640, height: int = 480) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()
+
+
+@pytest.fixture
+def mock_tracking_service():
+    """Provides a mocked CameraService for tracking tests."""
+    with patch("app.services.camera_service.ModelLoader"), \
+         patch("app.services.camera_service.InferenceEngine"):
+        service = MagicMock(spec=CameraService)
+        service.model_name = "yolov8n"
+        service.device = "cpu"
+        service.model = MagicMock()
+        service.detector = MagicMock()
+        service.detector.class_names = {0: "person", 1: "bicycle"}
+        service.annotator = MagicMock()
+        service.annotator.annotate.side_effect = lambda scene, detections, **kwargs: scene
+        service.counter = MagicMock()
+        service._lock = MagicMock()
+        service._lock.__enter__ = MagicMock()
+        service._lock.__exit__ = MagicMock()
+
+        # Default inference predict
+        mock_engine = MagicMock()
+        mock_results = MagicMock()
+        mock_engine.predict.return_value = ([mock_results], 10.0)
+        service.inference_engine = mock_engine
+
+        # Default process_results returns empty
+        service.detector.process_results.return_value = sv.Detections.empty()
+
+        # Counter count mock
+        def _count(dets):
+            total = len(dets) if dets is not None else 0
+            return {"total_count": total, "class_counts": {"person": total}}
+        service.counter.count.side_effect = _count
+
+        # _extract_boxes mock
+        def _extract(dets):
+            if dets is None or len(dets) == 0:
+                return []
+            boxes = []
+            for i in range(len(dets)):
+                tid = int(dets.tracker_id[i]) if (dets.tracker_id is not None and len(dets.tracker_id) > i) else None
+                boxes.append({
+                    "x1": float(dets.xyxy[i][0]),
+                    "y1": float(dets.xyxy[i][1]),
+                    "x2": float(dets.xyxy[i][2]),
+                    "y2": float(dets.xyxy[i][3]),
+                    "class_name": "person",
+                    "confidence": float(dets.confidence[i]) if dets.confidence is not None else 1.0,
+                    "tracker_id": tid,
+                })
+            return boxes
+        service._extract_boxes.side_effect = _extract
+
+        return service
+
+
+@pytest.fixture
+def client(mock_tracking_service):
+    """Provides a TestClient initialized with the mocked tracking service."""
+    set_camera_service(mock_tracking_service)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def test_session_tracking_isolation():
@@ -67,39 +135,28 @@ def test_tracker_id_persistence_across_frames():
     assert len(set(tracked_ids)) == 1, f"Expected 1 persistent ID, got: {tracked_ids}"
 
 
-def test_raw_vs_tracked_statistics_separation():
+def test_raw_vs_tracked_statistics_separation(mock_tracking_service):
     """Verify raw detection statistics are computed before tracking and tracked statistics after."""
-    camera_service = get_camera_service()
     session = StreamSession(
         session_id="session-stats",
         config=StreamConfig(confidence_threshold=0.25, enable_tracking=True),
     )
-
     frame_bytes = _create_jpeg_bytes()
 
-    # Mock inference to return 2 objects: one high confidence, one that tracker might keep or discard
-    fake_results = MagicMock()
-    fake_boxes = MagicMock()
-    fake_boxes.xyxy = np.array([[10, 10, 60, 60], [100, 100, 150, 150]])
-    fake_boxes.conf = np.array([0.9, 0.85])
-    fake_boxes.cls = np.array([0, 0])
-    fake_boxes.__len__.return_value = 2
-    fake_results.boxes = fake_boxes
+    mock_tracking_service.detector.process_results.return_value = sv.Detections(
+        xyxy=np.array([[10, 10, 60, 60], [100, 100, 150, 150]], dtype=np.float32),
+        confidence=np.array([0.9, 0.85], dtype=np.float32),
+        class_id=np.array([0, 0], dtype=np.int32),
+    )
 
-    orig_predict = camera_service.inference_engine.predict
-    camera_service.inference_engine.predict = MagicMock(return_value=(fake_results, 5.0))
-
-    try:
-        meta, _ = session.process_frame_bytes(camera_service, frame_bytes, frame_id=1)
-        stats = meta["stats"]
-        assert "total_count" in stats
-        assert "class_counts" in stats
-        assert "tracked_count" in stats
-        assert "tracked_class_counts" in stats
-        assert stats["total_count"] == 2
-        assert stats["tracked_count"] == 2
-    finally:
-        camera_service.inference_engine.predict = orig_predict
+    meta, _ = session.process_frame_bytes(mock_tracking_service, frame_bytes, frame_id=1)
+    stats = meta["stats"]
+    assert "total_count" in stats
+    assert "class_counts" in stats
+    assert "tracked_count" in stats
+    assert "tracked_class_counts" in stats
+    assert stats["total_count"] == 2
+    assert stats["tracked_count"] == 2
 
 
 def test_reset_tracker_clears_state_and_traces():
@@ -133,107 +190,74 @@ def test_reset_tracker_clears_state_and_traces():
     assert len(session.tracker.tracked_tracks) == 0
 
 
-def test_frame_skipping_no_duplicate_trace_points():
+def test_frame_skipping_no_duplicate_trace_points(mock_tracking_service):
     """Regression test: verify skip_interval > 1 does NOT append duplicate trace points on skipped frames."""
-    camera_service = get_camera_service()
     session = StreamSession(
         session_id="session-skip-trace",
         config=StreamConfig(skip_interval=2, enable_tracking=True, enable_trails=True),
     )
-
     frame_bytes = _create_jpeg_bytes()
-    fake_results = MagicMock()
-    fake_boxes = MagicMock()
-    fake_boxes.xyxy = np.array([[30, 30, 90, 90]])
-    fake_boxes.conf = np.array([0.92])
-    fake_boxes.cls = np.array([0])
-    fake_boxes.__len__.return_value = 1
-    fake_results.boxes = fake_boxes
 
-    orig_predict = camera_service.inference_engine.predict
-    camera_service.inference_engine.predict = MagicMock(return_value=(fake_results, 5.0))
+    mock_tracking_service.detector.process_results.return_value = sv.Detections(
+        xyxy=np.array([[30, 30, 90, 90]], dtype=np.float32),
+        confidence=np.array([0.92], dtype=np.float32),
+        class_id=np.array([0], dtype=np.int32),
+    )
 
-    try:
-        # Frame 1: Full inference -> should update tracker & trace
-        meta1, _ = session.process_frame_bytes(camera_service, frame_bytes, frame_id=1)
-        assert meta1["skipped"] is False
-        assert len(meta1["detections"]) == 1
-        tid = meta1["detections"][0]["tracker_id"]
-        assert tid is not None
+    # Frame 1: Full inference -> should update tracker & trace
+    meta1, _ = session.process_frame_bytes(mock_tracking_service, frame_bytes, frame_id=1)
+    assert meta1["skipped"] is False
+    assert len(meta1["detections"]) == 1
+    tid = meta1["detections"][0]["tracker_id"]
+    assert tid is not None
 
-        trace_points_f1 = len(session.trace_annotator.trace.get(tid))
-        assert trace_points_f1 == 1
+    trace_points_f1 = len(session.trace_annotator.trace.get(tid))
+    assert trace_points_f1 == 1
 
-        # Frame 2: Skipped frame -> must NOT update trace points
-        meta2, _ = session.process_frame_bytes(camera_service, frame_bytes, frame_id=2)
-        assert meta2["skipped"] is True
+    # Frame 2: Skipped frame -> must NOT update trace points
+    meta2, _ = session.process_frame_bytes(mock_tracking_service, frame_bytes, frame_id=2)
+    assert meta2["skipped"] is True
 
-        # Verify trace points remained strictly 1 (no duplicate point added)
-        trace_points_f2 = len(session.trace_annotator.trace.get(tid))
-        assert trace_points_f2 == 1, f"Expected 1 point, but duplicate was added: {trace_points_f2}"
-    finally:
-        camera_service.inference_engine.predict = orig_predict
+    # Verify trace points remained strictly 1 (no duplicate point added)
+    trace_points_f2 = len(session.trace_annotator.trace.get(tid))
+    assert trace_points_f2 == 1, f"Expected 1 point, but duplicate was added: {trace_points_f2}"
 
 
-def test_tracking_disabled_behavior():
+def test_tracking_disabled_behavior(mock_tracking_service):
     """Verify that when enable_tracking=False, tracker_id is None and tracked_count=0."""
-    camera_service = get_camera_service()
     session = StreamSession(
         session_id="session-no-track",
         config=StreamConfig(enable_tracking=False),
     )
-
     frame_bytes = _create_jpeg_bytes()
-    fake_results = MagicMock()
-    fake_boxes = MagicMock()
-    fake_boxes.xyxy = np.array([[40, 40, 100, 100]])
-    fake_boxes.conf = np.array([0.88])
-    fake_boxes.cls = np.array([0])
-    fake_boxes.__len__.return_value = 1
-    fake_results.boxes = fake_boxes
 
-    orig_predict = camera_service.inference_engine.predict
-    camera_service.inference_engine.predict = MagicMock(return_value=(fake_results, 5.0))
+    mock_tracking_service.detector.process_results.return_value = sv.Detections(
+        xyxy=np.array([[40, 40, 100, 100]], dtype=np.float32),
+        confidence=np.array([0.88], dtype=np.float32),
+        class_id=np.array([0], dtype=np.int32),
+    )
 
-    try:
-        meta, _ = session.process_frame_bytes(camera_service, frame_bytes, frame_id=1)
-        assert meta["stats"]["total_count"] == 1
-        assert meta["stats"]["tracked_count"] == 0
-        assert meta["detections"][0]["tracker_id"] is None
-    finally:
-        camera_service.inference_engine.predict = orig_predict
+    meta, _ = session.process_frame_bytes(mock_tracking_service, frame_bytes, frame_id=1)
+    assert meta["stats"]["total_count"] == 1
+    assert meta["stats"]["tracked_count"] == 0
+    assert meta["detections"][0]["tracker_id"] is None
 
 
-def test_empty_detection_frames_handling():
+def test_empty_detection_frames_handling(mock_tracking_service):
     """Verify empty detection frames do not throw and maintain tracking stability."""
-    camera_service = get_camera_service()
     session = StreamSession(session_id="session-empty", config=StreamConfig())
-
     frame_bytes = _create_jpeg_bytes()
-    fake_results = MagicMock()
-    fake_boxes = MagicMock()
-    fake_boxes.xyxy = np.empty((0, 4))
-    fake_boxes.conf = np.empty((0,))
-    fake_boxes.cls = np.empty((0,))
-    fake_boxes.__len__.return_value = 0
-    fake_results.boxes = fake_boxes
 
-    orig_predict = camera_service.inference_engine.predict
-    camera_service.inference_engine.predict = MagicMock(return_value=(fake_results, 3.0))
+    mock_tracking_service.detector.process_results.return_value = sv.Detections.empty()
 
-    try:
-        meta, _ = session.process_frame_bytes(camera_service, frame_bytes, frame_id=1)
-        assert meta["stats"]["total_count"] == 0
-        assert meta["stats"]["tracked_count"] == 0
-        assert len(meta["detections"]) == 0
-    finally:
-        camera_service.inference_engine.predict = orig_predict
+    meta, _ = session.process_frame_bytes(mock_tracking_service, frame_bytes, frame_id=1)
+    assert meta["stats"]["total_count"] == 0
+    assert meta["stats"]["tracked_count"] == 0
+    assert len(meta["detections"]) == 0
 
 
-def test_websocket_reset_tracker_protocol(client, monkeypatch):
+def test_websocket_reset_tracker_protocol(client):
     """Verify WebSocket protocol acknowledges reset_tracker message deterministically."""
-    from app.services.ticket_manager import ticket_manager
-
     ticket = ticket_manager.issue_ticket()
     with client.websocket_connect(
         f"/api/v1/stream?ticket={ticket}",
