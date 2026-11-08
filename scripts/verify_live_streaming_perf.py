@@ -98,14 +98,14 @@ async def verify_streaming_performance(base_url: str, access_token: str, num_fra
             recv_task = asyncio.create_task(receive_worker())
 
             # Send frames at ~15 FPS cadence (66ms interval)
-            for i in range(num_frames):
+            for _i in range(num_frames):
                 await ws.send_bytes(jpeg_bytes)
                 await asyncio.sleep(0.066)
 
             # Wait for remaining responses (max 5 seconds timeout)
             try:
                 await asyncio.wait_for(recv_task, timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 print("    Timed out waiting for all responses.")
 
             total_elapsed = time.perf_counter() - start_time
