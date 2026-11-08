@@ -4,9 +4,7 @@ import io
 import json
 from unittest.mock import MagicMock
 
-import cv2
 import numpy as np
-import pytest
 import supervision as sv
 from PIL import Image
 
@@ -49,7 +47,7 @@ def test_session_tracking_isolation():
 def test_tracker_id_persistence_across_frames():
     """Verify that ByteTrack assigns persistent IDs to smooth movements across frames."""
     session = StreamSession(session_id="session-persist", config=StreamConfig())
-    
+
     # Simulate a target moving slightly across 5 frames
     tracked_ids = []
     for step in range(5):
@@ -78,7 +76,7 @@ def test_raw_vs_tracked_statistics_separation():
     )
 
     frame_bytes = _create_jpeg_bytes()
-    
+
     # Mock inference to return 2 objects: one high confidence, one that tracker might keep or discard
     fake_results = MagicMock()
     fake_boxes = MagicMock()
@@ -107,7 +105,7 @@ def test_raw_vs_tracked_statistics_separation():
 def test_reset_tracker_clears_state_and_traces():
     """Verify reset_tracker() resets ByteTrack, clears trace points, and clears cached state."""
     session = StreamSession(session_id="session-reset", config=StreamConfig())
-    
+
     detections = sv.Detections(
         xyxy=np.array([[20, 20, 80, 80]], dtype=np.float32),
         confidence=np.array([0.9], dtype=np.float32),
@@ -169,7 +167,7 @@ def test_frame_skipping_no_duplicate_trace_points():
         # Frame 2: Skipped frame -> must NOT update trace points
         meta2, _ = session.process_frame_bytes(camera_service, frame_bytes, frame_id=2)
         assert meta2["skipped"] is True
-        
+
         # Verify trace points remained strictly 1 (no duplicate point added)
         trace_points_f2 = len(session.trace_annotator.trace.get(tid))
         assert trace_points_f2 == 1, f"Expected 1 point, but duplicate was added: {trace_points_f2}"
