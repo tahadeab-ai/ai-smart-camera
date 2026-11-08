@@ -277,6 +277,7 @@ def test_websocket_frame_size_limit(mock_ws_service, monkeypatch):
         resp = json.loads(resp_text)
         assert resp["type"] == "error"
         assert "exceeds" in resp["message"]
+        ws.close()
 
 
 def test_websocket_rejects_non_jpeg_frame(mock_ws_service):
@@ -302,7 +303,7 @@ def test_websocket_concurrency_limit_exceeded(mock_ws_service, monkeypatch):
 
     with client.websocket_connect(
         "/api/v1/stream", headers={"Origin": VALID_ORIGIN}
-    ):
+    ) as ws1:
         # Second simultaneous connection exceeds limit of 1
         with pytest.raises(WebSocketDisconnect) as excinfo:
             with client.websocket_connect(
@@ -310,3 +311,4 @@ def test_websocket_concurrency_limit_exceeded(mock_ws_service, monkeypatch):
             ):
                 pass
         assert excinfo.value.code == 1013
+        ws1.close()
