@@ -3,9 +3,9 @@ import { renderHook, act } from '@testing-library/react';
 import { useCamera } from '../hooks/useCamera';
 
 describe('useCamera', () => {
-  let mockTrack: { stop: ReturnType<typeof vi.fn> };
-  let mockStream: { getTracks: ReturnType<typeof vi.fn> };
-  let mockGetUserMedia: ReturnType<typeof vi.fn>;
+  let mockTrack: { stop: any };
+  let mockStream: { getTracks: any };
+  let mockGetUserMedia: any;
 
   beforeEach(() => {
     mockTrack = {

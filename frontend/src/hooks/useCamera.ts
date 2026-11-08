@@ -28,13 +28,10 @@ export function useCamera(options: UseCameraOptions = {}) {
       const allDevices = await navigator.mediaDevices.enumerateDevices();
       const videoDevs = allDevices.filter((d) => d.kind === 'videoinput');
       setDevices(videoDevs);
-      if (videoDevs.length > 0 && !selectedDeviceId) {
-        setSelectedDeviceId(videoDevs[0].deviceId);
-      }
     } catch (err) {
       console.warn('Could not enumerate video devices:', err);
     }
-  }, [selectedDeviceId]);
+  }, []);
 
   useEffect(() => {
     updateDevices();

@@ -24,6 +24,10 @@ export class ApiClient {
     }
   }
 
+  static clearToken(): void {
+    this.setToken(null);
+  }
+
   static getToken(): string | null {
     if (inMemoryToken) return inMemoryToken;
     try {

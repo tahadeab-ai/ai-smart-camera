@@ -13,7 +13,11 @@ from app.api.app import app
 from app.api.dependencies import set_camera_service
 from app.config import settings
 from app.services.camera_service import CameraService
-from app.services.rate_limiter import SlidingWindowRateLimiter, image_rate_limiter, ticket_rate_limiter
+from app.services.rate_limiter import (
+    SlidingWindowRateLimiter,
+    image_rate_limiter,
+    ticket_rate_limiter,
+)
 from app.services.ticket_manager import ticket_manager
 
 
