@@ -83,3 +83,17 @@ export interface ModelListResponse {
   models: ModelInfo[];
   active_model: string;
 }
+
+export type AppViewTab = 'camera' | 'image' | 'video' | 'analytics' | 'system';
+
+export interface SessionAnalyticsData {
+  totalFrames: number;
+  processedFrames: number;
+  droppedFrames: number;
+  avgLatencyMs: number;
+  avgFps: number;
+  classDistribution: Record<string, number>;
+  trackedCount: number;
+  maxConcurrentTracked: number;
+  startTime: number;
+}
